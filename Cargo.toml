@@ -16,8 +16,20 @@ exclude = [".github/"]
 # Published on its own: the crate is a widget, not part of whatever binary vendors it.
 [workspace]
 
+[features]
+default = ["syntax"]
+## Syntax highlighting, via syntect's bundled grammars.
+syntax = ["dep:syntect"]
+
 [dependencies]
 egui = "0.36"
+# regex-fancy rather than syntect's default regex-onig: onig builds oniguruma, which wants a C
+# toolchain, and a widget crate has to build wherever `cargo add` puts it. The themes, the HTML
+# output and the loaders are all things this crate does its own way, so none of them are wanted.
+syntect = { version = "5.3", default-features = false, features = [
+    "default-syntaxes",
+    "regex-fancy",
+], optional = true }
 
 [dev-dependencies]
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
