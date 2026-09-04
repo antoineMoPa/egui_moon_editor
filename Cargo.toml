@@ -1,0 +1,30 @@
+[package]
+name = "egui_moon_editor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A code editor widget for egui: a text buffer, a line-number fringe, and marks drawn into the text"
+authors = ["Antoine M-P"]
+license = "MIT"
+repository = "https://github.com/antoineMoPa/egui_moon_editor"
+documentation = "https://docs.rs/egui_moon_editor"
+readme = "README.md"
+keywords = ["egui", "editor", "code", "text", "gui"]
+categories = ["gui", "text-editors"]
+exclude = [".github/"]
+
+# Published on its own: the crate is a widget, not part of whatever binary vendors it.
+[workspace]
+
+[dependencies]
+egui = "0.36"
+
+[dev-dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui_kittest = "0.36"
+
+[[example]]
+name = "edit"
+
+[lints.rust]
+missing_docs = "warn"
