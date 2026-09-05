@@ -2,7 +2,7 @@
 //!
 //! Type into it and press `⌘S` (`ctrl+S` off macOS) to write it back.
 
-use egui_moon_editor::{Editor, EditorRequest, EditorStyle};
+use egui_moon_editor::{Editor, EditorRequest, EditorStyle, Language};
 
 struct EditWindow {
     path: std::path::PathBuf,
@@ -43,9 +43,13 @@ fn main() -> eframe::Result<()> {
         "egui_moon_editor",
         eframe::NativeOptions::default(),
         Box::new(move |_cc| {
+            let mut editor = Editor::new(text);
+            // What the file is read as, which is the one thing the widget cannot work out for
+            // itself: it holds a buffer, and only the caller knows where the buffer came from.
+            editor.set_language(Language::of_path(&path.to_string_lossy()));
             Ok(Box::new(EditWindow {
                 path,
-                editor: Editor::new(text),
+                editor,
                 status: String::new(),
             }))
         }),

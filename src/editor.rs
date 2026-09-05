@@ -2,7 +2,11 @@ use std::ops::Range;
 
 use egui::{Align, Rect, Response, Ui, pos2, vec2};
 
-use crate::{style::EditorStyle, text::char_ranges_to_bytes};
+use crate::{
+    style::EditorStyle,
+    syntax::{Highlighter, Language, TokenStyle},
+    text::char_ranges_to_bytes,
+};
 
 /// A range of the text to tint, and whether it is the one the caller has stepped to.
 ///
@@ -68,12 +72,23 @@ pub struct EditorOutput {
 /// ```
 pub struct Editor {
     text: String,
+    /// What the text is read as. Kept beside the highlighter because the highlighter is
+    /// thrown away and built again whenever the buffer under it changes.
+    language: Language,
+    /// How far the grammar has been read down the buffer, and what it found. Only ever asked
+    /// about the window on screen, so a file too big to parse in a frame still opens in one.
+    highlighter: Highlighter,
 }
 
 impl Editor {
-    /// An editor over `text`.
+    /// An editor over `text`, read as no language in particular until
+    /// [`set_language`](Self::set_language) says otherwise.
     pub fn new(text: String) -> Self {
-        Self { text }
+        Self {
+            text,
+            language: Language::plain(),
+            highlighter: Highlighter::new(Language::plain()),
+        }
     }
 
     /// The text as it stands, including whatever has been typed into it.
@@ -84,6 +99,15 @@ impl Editor {
     /// Replace the text, the way loading a file does.
     pub fn set_text(&mut self, text: String) {
         self.text = text;
+        // A different buffer entirely, so nothing the highlighter worked out about the old
+        // one is worth keeping - not the tokens, and not the parser positions between them.
+        self.highlighter = Highlighter::new(self.language.clone());
+    }
+
+    /// Read the text as `language` from here on, the way opening a file at a path does.
+    pub fn set_language(&mut self, language: Language) {
+        self.language = language.clone();
+        self.highlighter = Highlighter::new(language);
     }
 
     /// Draw the editor into `ui`, filling the space it was given.
@@ -98,15 +122,25 @@ impl Editor {
         request: &EditorRequest<'_>,
     ) -> EditorOutput {
         let row_height = ui.fonts_mut(|fonts| fonts.row_height(&style.font));
-        // Worked out before the text is lent to the `TextEdit`, and read from inside the
-        // layouter, which is handed the same text back.
+        // The text area's id, settled out here rather than left to egui to derive, because
+        // where the caret was *before* the text area ran is what says where an edit happened
+        // - and that can only be read back from the state under an id already known.
+        let text_id = ui.id().with("moon-editor-text");
+        // The text is lent to the `TextEdit` below, so anything worked out from it is worked
+        // out here: the layouter is handed the same text back and reads these.
         let byte_marks = char_ranges_to_bytes(&self.text, request.marks.ranges.iter().cloned());
         let line_count = self.text.lines().count().max(1);
+        let caret_before = caret_line(ui.ctx(), text_id, &self.text);
 
         let mut marks_laid_out = 0;
         let mut current_mark_at: Option<Rect> = None;
         let mut line_at: Option<Rect> = None;
         let mut response = None;
+        // The text and the highlighter are borrowed apart: the `TextEdit` takes the buffer
+        // mutably, and the layouter reads the tokens beside it in the same breath.
+        let Self {
+            text, highlighter, ..
+        } = self;
 
         egui::ScrollArea::vertical()
             .id_salt(ui.id().with("moon-editor"))
@@ -130,6 +164,19 @@ impl Editor {
                     // scroll area clips to the code, and the numbers sit left of it.
                     let painter = ui.painter().clone();
 
+                    // What the vertical scroll area has on screen, in lines, measured off the
+                    // top of the content the same way the fringe measures its numbers. The
+                    // grammar is read over that window and a screenful either side of it, so
+                    // a scroll of less than a page lands on lines already read rather than
+                    // racing the parser down the file.
+                    let visible = painter.clip_rect().expand(row_height).y_range();
+                    let window = lines_across(visible, fringe.min.y, row_height);
+                    highlighter.prepare(
+                        text,
+                        window.start.saturating_sub(rows_on_screen)
+                            ..window.end.saturating_add(rows_on_screen),
+                    );
+
                     egui::ScrollArea::horizontal()
                         .id_salt(ui.id().with("moon-editor-code"))
                         .auto_shrink([false, true])
@@ -143,6 +190,7 @@ impl Editor {
                                     text.as_str(),
                                     &byte_marks,
                                     request.marks.current,
+                                    highlighter,
                                     style,
                                     wrap,
                                 );
@@ -158,7 +206,8 @@ impl Editor {
                             // of numbers beside it sit on one surface instead of the text being
                             // a panel on top.
                             let frame = egui::Frame::new().inner_margin(style.text_margin);
-                            let output = egui::TextEdit::multiline(&mut self.text)
+                            let output = egui::TextEdit::multiline(text)
+                                .id(text_id)
                                 .font(style.font.clone())
                                 .code_editor()
                                 .frame(frame)
@@ -177,25 +226,33 @@ impl Editor {
                             // spacing of its own. A row only starts a line when the row before
                             // it ended in a newline, which is what keeps the numbers right if
                             // the text ever wraps.
-                            let visible = painter.clip_rect().expand(row_height).y_range();
-                            let mut line = 0;
-                            let mut starts_line = true;
-                            for placed in &output.galley.rows {
-                                let starts = starts_line;
-                                starts_line = placed.ends_with_newline;
-                                if !starts {
-                                    continue;
-                                }
-                                line += 1;
-                                let y = output.galley_pos.y + placed.pos.y;
-                                if Some(line) == request.line_of_interest {
-                                    line_at = Some(Rect::from_min_size(
-                                        pos2(output.galley_pos.x, y),
-                                        vec2(1.0, row_height),
-                                    ));
-                                }
-                                if !visible.contains(y) {
-                                    continue;
+                            let rows = &output.galley.rows;
+                            let top = output.galley_pos.y;
+                            // The line asked about is what the editor scrolls to, so it is
+                            // looked for over the whole galley: the point of asking is usually
+                            // that it is not on screen yet.
+                            if let Some(wanted) = request.line_of_interest {
+                                line_at = rows
+                                    .iter()
+                                    .zip(line_numbers(rows))
+                                    .find(|(_, line)| *line == Some(wanted))
+                                    .map(|(placed, _)| {
+                                        Rect::from_min_size(
+                                            pos2(output.galley_pos.x, top + placed.pos.y),
+                                            vec2(1.0, row_height),
+                                        )
+                                    });
+                            }
+                            // Rows run down the page in order, so the ones on screen are one
+                            // stretch of them: the painting starts where that stretch does and
+                            // stops where it ends, rather than walking the file every frame.
+                            let first =
+                                rows.partition_point(|placed| top + placed.pos.y < visible.min);
+                            for (placed, line) in rows.iter().zip(line_numbers(rows)).skip(first) {
+                                let Some(line) = line else { continue };
+                                let y = top + placed.pos.y;
+                                if y > visible.max {
+                                    break;
                                 }
                                 painter.text(
                                     pos2(fringe.max.x - 6.0, y),
@@ -221,10 +278,29 @@ impl Editor {
                 });
             });
 
+        let response = response.expect("the text area is always drawn");
+        // A `TextEdit` says *that* the text changed, never where. The caret is where: an edit
+        // happens at it, so the line it was on before and the line it is on now bracket
+        // everything that moved. The earlier of the two is what has to be re-read - a
+        // backspace over a line break and a selection delete both leave the caret above where
+        // it started, and a paste of several lines leaves it below - and everything above that
+        // line is untouched, because the grammar reaching it never looked further down.
+        if response.changed() {
+            let caret_after = caret_line(ui.ctx(), text_id, &self.text);
+            // With no caret to read there is nothing to say where the edit was, so the whole
+            // buffer is suspect. That is only reachable if something changed the text without
+            // going through the text area, which is not how this widget is driven.
+            let from = match (caret_before, caret_after) {
+                (Some(before), Some(after)) => before.min(after),
+                (before, after) => before.or(after).unwrap_or(0),
+            };
+            self.highlighter.invalidate_from(from);
+        }
+
         EditorOutput {
             // The text area is drawn on every path through the closure above, so there is
             // always one to report.
-            response: response.expect("the text area is always drawn"),
+            response,
             marks_laid_out,
             current_mark_at,
             line_at,
@@ -232,6 +308,51 @@ impl Editor {
     }
 }
 
+/// The number of the line each row of a galley starts, counting from one the way the fringe
+/// shows them, and nothing for a row that is the rest of a line the row above began.
+///
+/// A row only starts a line when the row before it ended in a newline, so a number cannot be
+/// read off a row's index: it has to be carried down from the top of the galley. Which is why
+/// this is an iterator and a caller looking only at the rows on screen still steps over the
+/// ones above them - stepping is all it does there, no number is written and nothing is
+/// painted.
+fn line_numbers(
+    rows: &[egui::epaint::text::PlacedRow],
+) -> impl Iterator<Item = Option<usize>> + use<'_> {
+    let mut line = 0;
+    let mut starts_line = true;
+    rows.iter().map(move |placed| {
+        let starts = starts_line;
+        starts_line = placed.ends_with_newline;
+        starts.then(|| {
+            line += 1;
+            line
+        })
+    })
+}
+
+/// The lines a stretch of the screen covers, as an index range from zero, given where the top
+/// of the content sits and how tall a line is.
+///
+/// An estimate, and only ever used to ask the grammar for more than is needed: rows the text
+/// area laid out taller than the font's own height would put the answer out by a line or two,
+/// which the margin around the window swallows.
+fn lines_across(visible: egui::Rangef, top: f32, row_height: f32) -> Range<usize> {
+    let line_at = |y: f32| ((y - top) / row_height).max(0.0) as usize;
+    line_at(visible.min)..line_at(visible.max) + 1
+}
+
+/// The line the caret sits on in `text`, counting from zero, or nothing when the text area
+/// has no caret in it.
+///
+/// The earlier end of a selection, not the caret proper: a selection about to be deleted is
+/// edited from its start, wherever the caret sitting in it happens to be.
+fn caret_line(ctx: &egui::Context, id: egui::Id, text: &str) -> Option<usize> {
+    let state = egui::text_edit::TextEditState::load(ctx, id)?;
+    let range = state.cursor.char_range()?;
+    let at = range.primary.index.0.min(range.secondary.index.0);
+    Some(text.chars().take(at).filter(|c| *c == '\n').count())
+}
 /// Select the current mark in the laid-out text and say where it landed, when the caller
 /// asked for it this frame.
 fn select_current_mark(
@@ -260,8 +381,13 @@ fn select_current_mark(
     Some(at)
 }
 
-/// The text laid out with every mark tinted behind it, and the current one underlined as well,
-/// so stepping between marks is visible without the others disappearing.
+/// The text laid out: every run in the look its token asks for, every mark tinted behind
+/// whatever it covers, and the current mark underlined as well, so stepping between marks is
+/// visible without the others disappearing.
+///
+/// The two are cut against each other - a new run starts at whichever boundary comes first -
+/// because a match found by a search lands wherever it lands, usually across the middle of a
+/// string or an identifier, and a search should not repaint the code it is searching.
 ///
 /// Marks are byte ranges of `text`. A mark reaching past the end of the text is where the
 /// laying out stops: the text can have been edited since the marks were worked out, and the
@@ -270,36 +396,158 @@ fn marked_text(
     text: &str,
     marks: &[Range<usize>],
     current: usize,
+    highlighter: &Highlighter,
     style: &EditorStyle,
     wrap_width: f32,
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = wrap_width;
 
+    let runs = token_runs(text, highlighter);
+    let mut at = 0;
     let mut cut = 0;
     for (index, range) in marks.iter().enumerate() {
         if range.start < cut || range.end > text.len() || !text.is_char_boundary(range.start) {
             break;
         }
-        job.append(&text[cut..range.start], 0.0, code_format(style, None));
-        let mut format = code_format(style, Some(style.mark_ink));
-        if index == current {
-            format.underline = egui::Stroke::new(1.0, style.current_mark_ink);
-        }
-        job.append(&text[range.clone()], 0.0, format);
+        append_runs(
+            &mut job,
+            text,
+            &runs,
+            &mut at,
+            cut..range.start,
+            style,
+            MarkLook::none(),
+        );
+        let mark = MarkLook {
+            background: style.mark_ink,
+            underline: match index == current {
+                true => egui::Stroke::new(1.0, style.current_mark_ink),
+                false => egui::Stroke::NONE,
+            },
+        };
+        append_runs(&mut job, text, &runs, &mut at, range.clone(), style, mark);
         cut = range.end;
     }
-    job.append(&text[cut..], 0.0, code_format(style, None));
+    let rest = cut..text.len();
+    append_runs(
+        &mut job,
+        text,
+        &runs,
+        &mut at,
+        rest,
+        style,
+        MarkLook::none(),
+    );
     job
 }
 
-/// One run of the editor's text: the font and ink the style asks for, over whatever the run is
-/// marked with.
-fn code_format(style: &EditorStyle, background: Option<egui::Color32>) -> egui::TextFormat {
+/// What a mark adds to the runs it covers, on top of the look each one already has.
+#[derive(Clone, Copy)]
+struct MarkLook {
+    background: egui::Color32,
+    underline: egui::Stroke,
+}
+
+impl MarkLook {
+    /// Text no mark reaches, which is most of a page.
+    fn none() -> Self {
+        Self {
+            background: egui::Color32::TRANSPARENT,
+            underline: egui::Stroke::NONE,
+        }
+    }
+}
+
+/// Lay `span` of the text into the job, cut where the runs under it change look, with `mark`
+/// - a mark's tint, and its underline where it is the current one - laid over each piece.
+///
+/// `at` is where the last span left off in `runs`; spans arrive in order, so the runs are
+/// walked once across the whole text rather than searched for each span.
+fn append_runs(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    runs: &[(Range<usize>, TokenStyle)],
+    at: &mut usize,
+    span: Range<usize>,
+    style: &EditorStyle,
+    mark: MarkLook,
+) {
+    let mut cut = span.start;
+    while cut < span.end {
+        // The runs cover the text end to end, so there is one over every byte of every span.
+        while runs[*at].0.end <= cut {
+            *at += 1;
+        }
+        let (range, token) = &runs[*at];
+        let end = range.end.min(span.end);
+        let mut format = code_format(style, *token);
+        format.background = mark.background;
+        format.underline = mark.underline;
+        job.append(&text[cut..end], 0.0, format);
+        cut = end;
+    }
+}
+
+/// The whole text cut into runs of one look each, in order and covering it end to end.
+///
+/// Tokens are per line and their ranges are relative to the line they are on, so the lines are
+/// walked the way the highlighter walks them - inclusive of the newline, which is what makes
+/// `"a\n"` one line to both of us - and each line's start is added back on. A line the
+/// highlighter has not read yet is one plain run, which is what an editor scrolled faster than
+/// the parser shows for a frame.
+fn token_runs(text: &str, highlighter: &Highlighter) -> Vec<(Range<usize>, TokenStyle)> {
+    let mut runs: Vec<(Range<usize>, TokenStyle)> = Vec::new();
+    let mut line_start = 0;
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let mut cut = 0;
+        for token in highlighter.tokens_on(index) {
+            // The buffer can have been edited since these were worked out, in which case the
+            // ranges are about a line that is no longer there: the rest of this one is drawn
+            // plain rather than cut at an offset that would not be a character boundary.
+            if token.range.start != cut
+                || token.range.end > line.len()
+                || !line.is_char_boundary(token.range.end)
+            {
+                break;
+            }
+            push_run(
+                &mut runs,
+                line_start + token.range.start..line_start + token.range.end,
+                token.style,
+            );
+            cut = token.range.end;
+        }
+        // Whatever the tokens did not cover, the newline at the end of the line included.
+        push_run(
+            &mut runs,
+            line_start + cut..line_start + line.len(),
+            TokenStyle::Plain,
+        );
+        line_start += line.len();
+    }
+    runs
+}
+
+/// Add a run, unless it is empty, joining it to the one before where they look the same: two
+/// runs of one look are one run to lay out.
+fn push_run(runs: &mut Vec<(Range<usize>, TokenStyle)>, range: Range<usize>, style: TokenStyle) {
+    if range.is_empty() {
+        return;
+    }
+    match runs.last_mut() {
+        Some((last, look)) if *look == style && last.end == range.start => last.end = range.end,
+        _ => runs.push((range, style)),
+    }
+}
+
+/// One run of the editor's text, in the look the style gives that kind of token.
+fn code_format(style: &EditorStyle, token: TokenStyle) -> egui::TextFormat {
+    let look = style.syntax.look(token);
     egui::TextFormat {
-        font_id: style.font.clone(),
-        color: style.ink,
-        background: background.unwrap_or(egui::Color32::TRANSPARENT),
+        font_id: look.font.clone(),
+        color: look.ink,
+        italics: look.italics,
         ..Default::default()
     }
 }

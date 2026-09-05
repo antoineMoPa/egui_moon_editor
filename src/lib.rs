@@ -46,6 +46,6 @@ mod syntax;
 mod text;
 
 pub use editor::{Editor, EditorOutput, EditorRequest, Marks};
-pub use style::EditorStyle;
+pub use style::{EditorStyle, SyntaxTheme, TokenLook};
 pub use syntax::{Highlighter, Language, Token, TokenStyle, highlight};
 pub use text::{byte_matches_in, match_index_on_line, matches_in};

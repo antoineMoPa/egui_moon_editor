@@ -34,6 +34,12 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     // to a reader they are the same kind of word.
     ("keyword", TokenStyle::Keyword),
     ("storage", TokenStyle::Keyword),
+    // A grammar files `u32` and `fn` under the one heading, and a reader wants them apart:
+    // `u32` names a type like any other and should read like `Vec`, where `fn` opens a
+    // declaration and reads like `let`. The longer row wins, so `storage.type.function` stays
+    // a keyword while the bare `storage.type` beside it becomes a type.
+    ("storage.type", TokenStyle::Type),
+    ("storage.type.function", TokenStyle::Keyword),
     ("variable.language", TokenStyle::Keyword),
     // Operators sit with the brackets and commas: the shape of the line, not its vocabulary.
     ("keyword.operator", TokenStyle::Punctuation),
@@ -120,6 +126,20 @@ mod tests {
         );
         assert_eq!(
             style_of_scope("keyword.control.rust"),
+            Some(TokenStyle::Keyword)
+        );
+    }
+
+    #[test]
+    fn a_primitive_reads_as_a_type_and_the_word_that_opens_a_function_does_not() {
+        // The scopes Sublime's Rust grammar really gives `u32`, `fn` and `pub`.
+        assert_eq!(style_of_scope("storage.type.rust"), Some(TokenStyle::Type));
+        assert_eq!(
+            style_of_scope("storage.type.function.rust"),
+            Some(TokenStyle::Keyword)
+        );
+        assert_eq!(
+            style_of_scope("storage.modifier.rust"),
             Some(TokenStyle::Keyword)
         );
     }
