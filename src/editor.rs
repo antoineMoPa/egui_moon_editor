@@ -3,6 +3,12 @@ use std::ops::Range;
 use egui::{Align, Rect, Response, Ui, pos2, vec2};
 
 use crate::{
+    completing,
+    completing::{Completion, Listing},
+    place::{
+        TextPoint, Word, caret_at, chars_before, text_point, word_around, word_at, word_before,
+        word_still_at,
+    },
     style::EditorStyle,
     syntax::{Highlighter, Language, TokenStyle},
     text::char_ranges_to_bytes,
@@ -40,6 +46,16 @@ pub struct EditorRequest<'a> {
     /// Whether the editor should take the keyboard this frame, so a tab brought forward can
     /// be typed into without clicking into the text first.
     pub focus: bool,
+    /// The modifier that turns the word under the pointer into something to click, the way a
+    /// browser makes a link of it. `None` — the default — is an editor with nothing to
+    /// navigate to, which is every editor until the caller has somewhere to send it.
+    ///
+    /// The caller picks the modifier because which one it is is a platform convention —
+    /// command on macOS, ctrl everywhere else — and a widget has no business holding an
+    /// opinion about the platform it was dropped into.
+    pub navigate_modifier: Option<egui::Modifiers>,
+    /// What to offer under the caret. Empty offers nothing, which is the usual state.
+    pub completions: &'a [Completion],
 }
 
 /// What drawing the editor turned up.
@@ -55,6 +71,22 @@ pub struct EditorOutput {
     /// Where [`EditorRequest::line_of_interest`] was laid out, once there is text on screen
     /// to measure it in. Already scrolled to.
     pub line_at: Option<Rect>,
+    /// The word under the pointer while the navigate modifier is held — underlined and shown
+    /// with a pointing-hand cursor, so it reads as clickable before it is clicked.
+    pub navigable_word: Option<Word>,
+    /// The word clicked with that modifier held, on the frame it was clicked.
+    pub navigated_to: Option<Word>,
+    /// Where the caret sits, when the text area has one.
+    pub caret: Option<TextPoint>,
+    /// The item taken this frame, by Enter, Tab or a click. Already in the text — reported so
+    /// the caller can stop offering and, if it wants, say what it did.
+    pub completion_taken: Option<Completion>,
+    /// Whether the list was put away with Escape this frame, so the caller can stop offering
+    /// until something makes it worth offering again.
+    pub completion_dismissed: bool,
+    /// The word being typed at the caret, when there is one: what the caller works out its
+    /// candidates from. `None` when the caret is not at the end of a word.
+    pub word_being_typed: Option<Word>,
 }
 
 /// A text buffer and how it is drawn: a code editor, with a fringe of line numbers beside it.
@@ -78,6 +110,17 @@ pub struct Editor {
     /// How far the grammar has been read down the buffer, and what it found. Only ever asked
     /// about the window on screen, so a file too big to parse in a frame still opens in one.
     highlighter: Highlighter,
+    /// The word the pointer was over last frame, kept so this frame can underline it.
+    ///
+    /// The chicken and the egg: the word under the pointer is found by hit-testing the
+    /// laid-out text, and laying the text out is the same call that would have to know about
+    /// the underline. So the underline is always a frame behind the pointer - invisible at
+    /// any speed a pointer moves, and much cheaper than laying the text out twice.
+    hovered_word: Option<Word>,
+    /// The list of things to finish the word being typed with: which row is current, and
+    /// whether it has been put away. The caller says what is in the list; which row the
+    /// keyboard is on is the editor's, since the editor is what draws the rows.
+    completing: Listing,
 }
 
 impl Editor {
@@ -88,6 +131,8 @@ impl Editor {
             text,
             language: Language::plain(),
             highlighter: Highlighter::new(Language::plain()),
+            hovered_word: None,
+            completing: Listing::default(),
         }
     }
 
@@ -100,8 +145,10 @@ impl Editor {
     pub fn set_text(&mut self, text: String) {
         self.text = text;
         // A different buffer entirely, so nothing the highlighter worked out about the old
-        // one is worth keeping - not the tokens, and not the parser positions between them.
+        // one is worth keeping - not the tokens, and not the parser positions between them,
+        // and not the word the pointer was over, which was a word of the text that is gone.
         self.highlighter = Highlighter::new(self.language.clone());
+        self.hovered_word = None;
     }
 
     /// Read the text as `language` from here on, the way opening a file at a path does.
@@ -130,16 +177,52 @@ impl Editor {
         // out here: the layouter is handed the same text back and reads these.
         let byte_marks = char_ranges_to_bytes(&self.text, request.marks.ranges.iter().cloned());
         let line_count = self.text.lines().count().max(1);
-        let caret_before = caret_line(ui.ctx(), text_id, &self.text);
+        let caret_before = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
+        // Held now, rather than asked about at the moment of the click: the underline and the
+        // pointing hand have to be there before the click, which is the whole point of them.
+        let navigating = request
+            .navigate_modifier
+            .is_some_and(|wanted| ui.input(|input| input.modifiers.matches_exact(wanted)));
+        // What to underline, from where the pointer was last frame - and only while the text
+        // under it is still the word that was found there, since the buffer can have been
+        // typed into in between.
+        let underline = match navigating {
+            true => self
+                .hovered_word
+                .as_ref()
+                .and_then(|word| word_still_at(&self.text, word)),
+            false => None,
+        };
+
+        // The list of things to finish the word being typed with, settled before anything is
+        // drawn: whether it is on screen is what says who gets the arrows, Enter, Tab and
+        // Escape this frame, and the text area reads those the moment it runs.
+        self.completing.offered(request.completions);
+        let focused = request.focus || ui.memory(|memory| memory.has_focus(text_id));
+        let mut presses = completing::Presses::default();
+        if self.completing.showing(request.completions, focused) {
+            presses = completing::take_keys(ui, &mut self.completing, request.completions.len());
+        }
+        // Drawn only while it is still the answer to something: a list that was just taken
+        // from or put away is already gone by the time this frame is painted.
+        let drawing_list = self.completing.showing(request.completions, focused)
+            && presses.take.is_none()
+            && !presses.dismissed;
 
         let mut marks_laid_out = 0;
+        let mut clicked_completion: Option<usize> = None;
         let mut current_mark_at: Option<Rect> = None;
         let mut line_at: Option<Rect> = None;
         let mut response = None;
+        let mut navigable_word: Option<Word> = None;
+        let mut navigated_to: Option<Word> = None;
         // The text and the highlighter are borrowed apart: the `TextEdit` takes the buffer
         // mutably, and the layouter reads the tokens beside it in the same breath.
         let Self {
-            text, highlighter, ..
+            text,
+            highlighter,
+            completing: listing,
+            ..
         } = self;
 
         egui::ScrollArea::vertical()
@@ -190,6 +273,7 @@ impl Editor {
                                     text.as_str(),
                                     &byte_marks,
                                     request.marks.current,
+                                    underline.clone(),
                                     highlighter,
                                     style,
                                     wrap,
@@ -218,6 +302,30 @@ impl Editor {
                                 .show(ui);
                             if request.focus {
                                 output.response.request_focus();
+                            }
+
+                            // The word under the pointer, found in the text as it was just
+                            // laid out - so what is reported is this frame's, and only the
+                            // underline lags. `contains_pointer` rather than `hovered`: the
+                            // answer is about where the pointer is, not about whether the
+                            // text area is the widget entitled to react to it.
+                            if navigating && output.response.contains_pointer() {
+                                navigable_word = ui
+                                    .input(|input| input.pointer.interact_pos())
+                                    .and_then(|pointer| {
+                                        word_at(
+                                            text.as_str(),
+                                            &output.galley,
+                                            output.galley_pos,
+                                            pointer,
+                                        )
+                                    });
+                            }
+                            if let Some(word) = &navigable_word {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                if output.response.clicked() {
+                                    navigated_to = Some(word.clone());
+                                }
                             }
 
                             // Each number at the height the galley actually gave its line -
@@ -263,6 +371,28 @@ impl Editor {
                                 );
                             }
 
+                            // Hung off the caret in the text as it was just laid out, which is
+                            // the only place the caret's rect can be measured from.
+                            if drawing_list
+                                && let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str())
+                            {
+                                let at = egui::text::CCursor::new(chars_before(
+                                    text.as_str(),
+                                    caret.offset,
+                                ));
+                                let caret_at = output
+                                    .galley
+                                    .pos_from_cursor(at)
+                                    .translate(output.galley_pos.to_vec2());
+                                clicked_completion = completing::draw(
+                                    ui,
+                                    style,
+                                    request.completions,
+                                    listing,
+                                    caret_at,
+                                );
+                            }
+
                             marks_laid_out = request.marks.ranges.len();
                             response = Some(output.response.response.clone());
                             current_mark_at = select_current_mark(ui, &request.marks, output);
@@ -279,6 +409,8 @@ impl Editor {
             });
 
         let response = response.expect("the text area is always drawn");
+        // Kept for the next frame to underline: this frame's layout is already behind us.
+        self.hovered_word = navigable_word.clone();
         // A `TextEdit` says *that* the text changed, never where. The caret is where: an edit
         // happens at it, so the line it was on before and the line it is on now bracket
         // everything that moved. The earlier of the two is what has to be re-read - a
@@ -286,7 +418,7 @@ impl Editor {
         // it started, and a paste of several lines leaves it below - and everything above that
         // line is untouched, because the grammar reaching it never looked further down.
         if response.changed() {
-            let caret_after = caret_line(ui.ctx(), text_id, &self.text);
+            let caret_after = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
             // With no caret to read there is nothing to say where the edit was, so the whole
             // buffer is suspect. That is only reachable if something changed the text without
             // going through the text area, which is not how this widget is driven.
@@ -297,6 +429,35 @@ impl Editor {
             self.highlighter.invalidate_from(from);
         }
 
+        // Put in after the text area has run rather than before it: the caret it is measured
+        // from is the one the text area just stored, so a character typed in the same frame as
+        // the Enter that took a row is already accounted for.
+        let completion_taken = presses
+            .take
+            .or(clicked_completion)
+            .and_then(|index| request.completions.get(index))
+            .cloned();
+        if let Some(completion) = &completion_taken {
+            let from = insert_completion(ui.ctx(), text_id, &mut self.text, &completion.insert);
+            self.highlighter.invalidate_from(from);
+            self.completing.dismiss();
+        }
+
+        // Left behind for the next frame, after the text area has set a filter of its own:
+        // while there is a list on screen, Escape and Tab are the list's, and egui works out
+        // whose they are before any of this runs.
+        if self.completing.showing(request.completions, response.has_focus()) {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(text_id, completing::LIST_KEEPS_KEYS);
+            });
+        }
+
+        // Read after everything that could have moved it: what was typed, and a row taken.
+        let caret = caret_at(ui.ctx(), text_id, &self.text);
+        let word_being_typed = caret
+            .as_ref()
+            .and_then(|point| word_before(&self.text, point.offset));
+
         EditorOutput {
             // The text area is drawn on every path through the closure above, so there is
             // always one to report.
@@ -304,8 +465,49 @@ impl Editor {
             marks_laid_out,
             current_mark_at,
             line_at,
+            navigable_word,
+            navigated_to,
+            // Read after the text area has run, so an edit or a click this frame is already
+            // in it: where the caret is now is what a caller showing a line and column, or
+            // asking a server about the place it sits, has to be told.
+            caret,
+            completion_taken,
+            completion_dismissed: presses.dismissed,
+            word_being_typed,
         }
     }
+}
+
+/// Put `insert` into the text in place of the word being typed at the caret, leave the caret
+/// at the end of it, and say which line the change starts on.
+///
+/// The word is found around the caret here rather than carried over from the frame the
+/// candidates were worked out on: the buffer can have been typed into in between, and what is
+/// replaced has to be what is under the caret now. A caret on a space replaces nothing and the
+/// text is put in where it sits.
+///
+/// The cursor is stored back into the text area's own state, after the fact, because the text
+/// area has already run this frame and is holding a cursor into the text as it was before.
+fn insert_completion(
+    ctx: &egui::Context,
+    id: egui::Id,
+    text: &mut String,
+    insert: &str,
+) -> usize {
+    let at = caret_at(ctx, id, text).map_or(text.len(), |point| point.offset);
+    let range = word_around(text, at).unwrap_or(at..at);
+    let line = text_point(text, range.start).line;
+    text.replace_range(range.clone(), insert);
+
+    let end = chars_before(text, range.start + insert.len());
+    let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(end),
+        )));
+    state.store(ctx, id);
+    line
 }
 
 /// The number of the line each row of a galley starts, counting from one the way the fringe
@@ -342,17 +544,6 @@ fn lines_across(visible: egui::Rangef, top: f32, row_height: f32) -> Range<usize
     line_at(visible.min)..line_at(visible.max) + 1
 }
 
-/// The line the caret sits on in `text`, counting from zero, or nothing when the text area
-/// has no caret in it.
-///
-/// The earlier end of a selection, not the caret proper: a selection about to be deleted is
-/// edited from its start, wherever the caret sitting in it happens to be.
-fn caret_line(ctx: &egui::Context, id: egui::Id, text: &str) -> Option<usize> {
-    let state = egui::text_edit::TextEditState::load(ctx, id)?;
-    let range = state.cursor.char_range()?;
-    let at = range.primary.index.0.min(range.secondary.index.0);
-    Some(text.chars().take(at).filter(|c| *c == '\n').count())
-}
 /// Select the current mark in the laid-out text and say where it landed, when the caller
 /// asked for it this frame.
 fn select_current_mark(
@@ -396,6 +587,7 @@ fn marked_text(
     text: &str,
     marks: &[Range<usize>],
     current: usize,
+    navigable: Option<Range<usize>>,
     highlighter: &Highlighter,
     style: &EditorStyle,
     wrap_width: f32,
@@ -405,20 +597,30 @@ fn marked_text(
 
     let runs = token_runs(text, highlighter);
     let mut at = 0;
+    for (span, look) in marked_spans(text, marks, current, navigable, style) {
+        append_runs(&mut job, text, &runs, &mut at, span, style, look);
+    }
+    job
+}
+
+/// The text cut into spans of one [`MarkLook`] each, in order and covering it end to end.
+///
+/// Two things are laid over the text here and they are cut against each other rather than one
+/// winning: a search can find a match inside the word the pointer is over, and neither the
+/// match nor the word it is in should disappear because of the other.
+fn marked_spans(
+    text: &str,
+    marks: &[Range<usize>],
+    current: usize,
+    navigable: Option<Range<usize>>,
+    style: &EditorStyle,
+) -> Vec<(Range<usize>, MarkLook)> {
+    let mut spans = Vec::new();
     let mut cut = 0;
     for (index, range) in marks.iter().enumerate() {
         if range.start < cut || range.end > text.len() || !text.is_char_boundary(range.start) {
             break;
         }
-        append_runs(
-            &mut job,
-            text,
-            &runs,
-            &mut at,
-            cut..range.start,
-            style,
-            MarkLook::none(),
-        );
         let mark = MarkLook {
             background: style.mark_ink,
             underline: match index == current {
@@ -426,20 +628,51 @@ fn marked_text(
                 false => egui::Stroke::NONE,
             },
         };
-        append_runs(&mut job, text, &runs, &mut at, range.clone(), style, mark);
+        spans.push((cut..range.start, MarkLook::none()));
+        spans.push((range.clone(), mark));
         cut = range.end;
     }
-    let rest = cut..text.len();
-    append_runs(
-        &mut job,
-        text,
-        &runs,
-        &mut at,
-        rest,
-        style,
-        MarkLook::none(),
-    );
-    job
+    spans.push((cut..text.len(), MarkLook::none()));
+
+    // The word was found in the text as it was at the top of the frame, and a `TextEdit` lays
+    // its text out again after applying what was typed into it - so by here the word can be
+    // over an offset that is no longer a character boundary, and cutting the text there would
+    // panic. A frame with no underline on it is the right answer to that.
+    let Some(word) = navigable.filter(|word| {
+        word.end <= text.len()
+            && text.is_char_boundary(word.start)
+            && text.is_char_boundary(word.end)
+    }) else {
+        return spans;
+    };
+    spans
+        .into_iter()
+        .flat_map(|(span, look)| underlined_word(span, look, &word, style))
+        .collect()
+}
+
+/// One span cut where the word under the pointer starts and ends, with the piece inside it
+/// underlined: the word reads as a link, in the ink the text around it is set in, so it is the
+/// underline that says it can be clicked rather than a colour the code does not otherwise use.
+fn underlined_word(
+    span: Range<usize>,
+    look: MarkLook,
+    word: &Range<usize>,
+    style: &EditorStyle,
+) -> Vec<(Range<usize>, MarkLook)> {
+    let inside = span.start.max(word.start)..span.end.min(word.end);
+    if inside.is_empty() {
+        return vec![(span, look)];
+    }
+    let underlined = MarkLook {
+        underline: egui::Stroke::new(1.0, style.ink),
+        ..look
+    };
+    vec![
+        (span.start..inside.start, look),
+        (inside.clone(), underlined),
+        (inside.end..span.end, look),
+    ]
 }
 
 /// What a mark adds to the runs it covers, on top of the look each one already has.

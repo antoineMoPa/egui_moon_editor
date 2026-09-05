@@ -13,6 +13,12 @@
 //! tally. [`Editor`] takes the ranges to tint as per-frame input and hands back how many it
 //! laid out and where the current one landed.
 //!
+//! The same seam is where finishing a word runs. The caller hands over a list of
+//! [`Completion`]s — worked out from whatever it is that knows what the text means — and is
+//! told the word being typed and which candidate was taken. The editor draws the list under
+//! the caret, borrows the keyboard from the text while it is showing, and puts the chosen one
+//! in, because the buffer and the caret in it are the editor's.
+//!
 //! ```no_run
 //! # fn frame(ui: &mut egui::Ui, editor: &mut egui_moon_editor::Editor, query: &str) {
 //! use egui_moon_editor::{EditorRequest, EditorStyle, Marks};
@@ -40,12 +46,16 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::doc_markdown)]
 
+mod completing;
 mod editor;
+mod place;
 mod style;
 mod syntax;
 mod text;
 
+pub use completing::Completion;
 pub use editor::{Editor, EditorOutput, EditorRequest, Marks};
+pub use place::{TextPoint, Word};
 pub use style::{EditorStyle, SyntaxTheme, TokenLook};
 pub use syntax::{Highlighter, Language, Token, TokenStyle, highlight};
 pub use text::{byte_matches_in, match_index_on_line, matches_in};

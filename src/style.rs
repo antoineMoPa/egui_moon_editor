@@ -114,6 +114,30 @@ pub struct EditorStyle {
     /// tinted harder: a background solid enough to stand out from the other marks would take
     /// the text with it.
     pub current_mark_ink: Color32,
+    /// The panel the list of things to finish a word with is drawn on.
+    pub completion_ground: Color32,
+    /// The line around that panel, which is what lifts it off the code behind it.
+    pub completion_edge: Color32,
+    /// What the current row of the list is filled with.
+    pub completion_current_ground: Color32,
+    /// The line around the current row. Fill and line together, the way the rest of this
+    /// product marks the row a list's keyboard is on.
+    pub completion_current_edge: Color32,
+    /// The ink the quieter half of a row — a type, a signature, where it came from — is set
+    /// in, against the right edge of the row.
+    pub completion_detail_ink: Color32,
+    /// How wide the list is. Fixed rather than measured off the rows in it, so a long detail
+    /// on one row does not make the whole list jump wider as it is typed into.
+    pub completion_width: f32,
+    /// How many rows of the list are on screen at once. Past that the list scrolls under the
+    /// highlight rather than growing down the page.
+    pub completion_rows: usize,
+    /// Between a row's text and its edges, and what a row is taller than the text in it.
+    pub completion_row_pad: f32,
+    /// Between the caret and the list, so the list does not sit on the line being typed.
+    pub completion_gap: f32,
+    /// Between the edge of the list and the rows in it.
+    pub completion_margin: Margin,
     /// How each kind of token is drawn. [`ink`](Self::ink) and [`font`](Self::font) still say
     /// what the text area is worth on its own — the caret, the selection, the size the rows
     /// are measured at — and this says what each run inside it looks like.
@@ -128,6 +152,14 @@ impl Default for EditorStyle {
 
 /// The size the text is set at when the style comes from egui's own visuals.
 const DEFAULT_CODE_SIZE: f32 = 12.0;
+
+/// How wide the list of things to finish a word with is, in points: enough for an identifier
+/// of a length people actually write and a short note about it beside.
+const DEFAULT_COMPLETION_WIDTH: f32 = 280.0;
+
+/// How many rows of that list are on screen at once. Enough to see that there is a choice,
+/// few enough that the list does not become the page.
+const DEFAULT_COMPLETION_ROWS: usize = 8;
 
 /// The ink each kind of token gets on a light ground, and on a dark one.
 ///
@@ -181,6 +213,16 @@ impl EditorStyle {
             text_margin: Margin::symmetric(4, 2),
             mark_ink: accent.linear_multiply(0.35),
             current_mark_ink: accent,
+            completion_ground: visuals.window_fill,
+            completion_edge: visuals.widgets.noninteractive.bg_stroke.color,
+            completion_current_ground: accent.linear_multiply(0.35),
+            completion_current_edge: accent,
+            completion_detail_ink: muted,
+            completion_width: DEFAULT_COMPLETION_WIDTH,
+            completion_rows: DEFAULT_COMPLETION_ROWS,
+            completion_row_pad: 6.0,
+            completion_gap: 3.0,
+            completion_margin: Margin::same(3),
             syntax: SyntaxTheme::from_fn(|style| TokenLook {
                 ink: default_ink(style, visuals.dark_mode, ink, muted),
                 font: FontId::monospace(DEFAULT_CODE_SIZE),
