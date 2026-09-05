@@ -33,13 +33,13 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     // `let`, `fn`, `pub`, `async`: grammars file these under storage rather than keyword, but
     // to a reader they are the same kind of word.
     ("keyword", TokenStyle::Keyword),
+    // Covers `let`, `const`, `static`, `struct`, `fn`, `pub` - and, in Rust, the primitive
+    // type names too. `let` and `u32` are both exactly `storage.type.rust`: the grammar draws
+    // no line between the word that opens a declaration and the built-in type beside it, so
+    // neither can this table. Reading them all as keywords is the better half of that trade -
+    // `let` and `const` losing their weight next to a bold `fn` reads worse than `u32`
+    // keeping it. Do not try to split this on the scope; there is nothing there to split on.
     ("storage", TokenStyle::Keyword),
-    // A grammar files `u32` and `fn` under the one heading, and a reader wants them apart:
-    // `u32` names a type like any other and should read like `Vec`, where `fn` opens a
-    // declaration and reads like `let`. The longer row wins, so `storage.type.function` stays
-    // a keyword while the bare `storage.type` beside it becomes a type.
-    ("storage.type", TokenStyle::Type),
-    ("storage.type.function", TokenStyle::Keyword),
     ("variable.language", TokenStyle::Keyword),
     // Operators sit with the brackets and commas: the shape of the line, not its vocabulary.
     ("keyword.operator", TokenStyle::Punctuation),
@@ -130,10 +130,13 @@ mod tests {
         );
     }
 
+    /// Pins the trade the `storage` row makes, so that reading `u32` as a keyword is a
+    /// decision on the record rather than something to be quietly "fixed" later.
     #[test]
-    fn a_primitive_reads_as_a_type_and_the_word_that_opens_a_function_does_not() {
-        // The scopes Sublime's Rust grammar really gives `u32`, `fn` and `pub`.
-        assert_eq!(style_of_scope("storage.type.rust"), Some(TokenStyle::Type));
+    fn a_declaration_and_the_built_in_type_beside_it_are_one_scope_and_read_alike() {
+        // What Sublime's Rust grammar really hands back: `let` and `u32` are the same scope
+        // to the character, so no table can tell them apart.
+        assert_eq!(style_of_scope("storage.type.rust"), Some(TokenStyle::Keyword));
         assert_eq!(
             style_of_scope("storage.type.function.rust"),
             Some(TokenStyle::Keyword)
