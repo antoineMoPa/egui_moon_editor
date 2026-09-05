@@ -136,7 +136,10 @@ mod tests {
     fn a_declaration_and_the_built_in_type_beside_it_are_one_scope_and_read_alike() {
         // What Sublime's Rust grammar really hands back: `let` and `u32` are the same scope
         // to the character, so no table can tell them apart.
-        assert_eq!(style_of_scope("storage.type.rust"), Some(TokenStyle::Keyword));
+        assert_eq!(
+            style_of_scope("storage.type.rust"),
+            Some(TokenStyle::Keyword)
+        );
         assert_eq!(
             style_of_scope("storage.type.function.rust"),
             Some(TokenStyle::Keyword)
@@ -156,7 +159,10 @@ mod tests {
     #[test]
     fn the_marks_that_open_a_comment_or_a_string_are_left_to_the_thing_they_open() {
         assert_eq!(style_of_scope("punctuation.definition.comment.rust"), None);
-        assert_eq!(style_of_scope("punctuation.definition.string.begin.rust"), None);
+        assert_eq!(
+            style_of_scope("punctuation.definition.string.begin.rust"),
+            None
+        );
         assert_eq!(
             style_of_scope("punctuation.separator.rust"),
             Some(TokenStyle::Punctuation)

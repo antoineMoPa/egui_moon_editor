@@ -418,9 +418,8 @@ mod backend {
     }
 }
 
-pub use backend::Language;
 use backend::Cursor;
-
+pub use backend::Language;
 
 #[cfg(test)]
 mod tests {
@@ -446,7 +445,9 @@ mod tests {
     fn tokens_read_over(text: &str, lines: Range<usize>) -> Vec<Vec<Token>> {
         let mut highlighter = Highlighter::new(Language::of_path("buffer.rs"));
         highlighter.prepare(text, lines.clone());
-        lines.map(|line| highlighter.tokens_on(line).to_vec()).collect()
+        lines
+            .map(|line| highlighter.tokens_on(line).to_vec())
+            .collect()
     }
 
     #[test]
@@ -472,7 +473,9 @@ mod tests {
         for path in ["/etc/hosts", "notes.qqzz", "/home/someone.dir/README"] {
             let lines = highlight(&Language::of_path(path), "fn main() {}\n");
             assert!(
-                lines[0].iter().all(|token| token.style == TokenStyle::Plain),
+                lines[0]
+                    .iter()
+                    .all(|token| token.style == TokenStyle::Plain),
                 "{path} was read as something"
             );
         }
@@ -504,13 +507,19 @@ mod tests {
             .iter()
             .find(|token| token.style == TokenStyle::StringLit)
             .unwrap();
-        assert_eq!(&"let greeting = \"hello\";"[quoted.range.clone()], "\"hello\"");
+        assert_eq!(
+            &"let greeting = \"hello\";"[quoted.range.clone()],
+            "\"hello\""
+        );
     }
 
     #[cfg(not(feature = "syntax"))]
     #[test]
     fn without_the_feature_a_line_is_one_plain_run_and_the_shape_is_unchanged() {
-        let lines = highlight(&Language::of_path("src/main.rs"), "fn main() {}\nlet x = 1;\n");
+        let lines = highlight(
+            &Language::of_path("src/main.rs"),
+            "fn main() {}\nlet x = 1;\n",
+        );
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].len(), 1);
         assert_eq!(lines[0][0].style, TokenStyle::Plain);
@@ -591,7 +600,11 @@ mod tests {
         let mut highlighter = Highlighter::new(Language::of_path("huge.rs"));
         highlighter.prepare(&text, 0..40);
 
-        let read = highlighter.tokens.iter().filter(|line| line.is_some()).count();
+        let read = highlighter
+            .tokens
+            .iter()
+            .filter(|line| line.is_some())
+            .count();
         assert_eq!(read, 40, "more lines were read than the window asked about");
         assert_eq!(
             highlighter.checkpoints.len(),
