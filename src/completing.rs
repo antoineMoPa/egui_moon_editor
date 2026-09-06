@@ -30,6 +30,21 @@ pub struct Completion {
     pub detail: Option<String>,
     /// What goes into the text when this one is taken, in place of the word being typed.
     pub insert: String,
+    /// How far back from the end of what was just put in the caret is left, in bytes.
+    ///
+    /// `0` — the usual — leaves it at the end, ready to be typed on from. Anything else is for
+    /// an insertion the caret does not belong at the end of: a caller that inserts `greet()`
+    /// so that a call reads as a call passes `1`, and the caret lands between the parentheses
+    /// with the argument's place already made for it.
+    ///
+    /// It is a distance rather than a flag because where a caret goes is the editor's business
+    /// and what the text means is not. That `greet` is a function, and that a function is
+    /// written with parentheses after it, are facts about a language; a caller that knows them
+    /// says where to leave the caret, and the editor never has to learn what a function is.
+    ///
+    /// Must be no more than `insert` is long and must land on a character boundary in it — a
+    /// caret half way into a character is not a place.
+    pub caret_back: usize,
 }
 
 /// What the editor keeps about the list between frames: which row is current, and whether the
@@ -324,6 +339,7 @@ mod tests {
                 label: (*label).to_string(),
                 detail: None,
                 insert: (*label).to_string(),
+                caret_back: 0,
             })
             .collect()
     }

@@ -16,13 +16,25 @@ use egui_moon_editor::{Completion, Editor, EditorRequest, EditorStyle, TextPoint
 /// application working out candidates as the text is typed does.
 type Offer = Arc<Mutex<Vec<Completion>>>;
 
-/// A candidate that reads as its own label and puts its own label in — which is most of them,
-/// and lets a test say what it means in one word.
+/// A candidate that reads as its own label and puts its own label in, leaving the caret at the
+/// end of it — which is most of them, and lets a test say what it means in one word.
 fn candidate(label: &str) -> Completion {
     Completion {
         label: label.to_string(),
         detail: None,
         insert: label.to_string(),
+        caret_back: 0,
+    }
+}
+
+/// A candidate that puts more in than the caret belongs at the end of: a call, whose caret is
+/// asked for `caret_back` bytes short of the end of what went in.
+fn candidate_leaving_the_caret_back(label: &str, insert: &str, caret_back: usize) -> Completion {
+    Completion {
+        label: label.to_string(),
+        detail: None,
+        insert: insert.to_string(),
+        caret_back,
     }
 }
 
@@ -270,4 +282,59 @@ fn a_list_that_shortens_under_the_highlight_still_takes_a_row_that_is_in_it() {
         Some("value_one".to_string())
     );
     assert_eq!(harness.state().text, "let value_one");
+}
+
+/// What a caller that writes the parentheses of a call needs of the editor: the text goes in
+/// whole and the caret is left inside them, ready for an argument, rather than after the
+/// closing one where nothing can be typed.
+#[test]
+fn a_candidate_that_asks_for_the_caret_back_leaves_it_that_far_short_of_the_end() {
+    let offer: Offer = Arc::new(Mutex::new(Vec::new()));
+    let mut harness = harness(&offer);
+    harness.run_steps(4);
+    type_into(&mut harness, "let x = gre");
+    *offer.lock().unwrap() = vec![candidate_leaving_the_caret_back("greet", "greet()", 1)];
+    harness.run_steps(4);
+
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(4);
+
+    assert_eq!(harness.state().text, "let x = greet()");
+    assert_eq!(
+        harness.state().caret.as_ref().map(|point| point.offset),
+        Some("let x = greet(".len()),
+        "the caret is not between the parentheses"
+    );
+}
+
+/// The same by Tab rather than Enter, since both take a row — and a caller asking for nothing
+/// back still gets exactly what it got before there was anything to ask for.
+#[test]
+fn tab_takes_a_candidate_too_and_one_asking_for_nothing_back_ends_up_at_the_end_as_ever() {
+    let offer: Offer = Arc::new(Mutex::new(Vec::new()));
+    let mut harness = harness(&offer);
+    harness.run_steps(4);
+    type_into(&mut harness, "gre");
+    *offer.lock().unwrap() = vec![candidate_leaving_the_caret_back("greet", "greet()", 1)];
+    harness.run_steps(4);
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(4);
+    assert_eq!(harness.state().text, "greet()");
+    assert_eq!(
+        harness.state().caret.as_ref().map(|point| point.offset),
+        Some("greet(".len())
+    );
+
+    harness.get_by_role(Role::MultilineTextInput).type_text(" val");
+    harness.run_steps(4);
+    *offer.lock().unwrap() = vec![candidate("value")];
+    harness.run_steps(4);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(4);
+    assert_eq!(harness.state().text, "greet( value)");
+    assert_eq!(
+        harness.state().caret.as_ref().map(|point| point.offset),
+        Some("greet( value".len()),
+        "a candidate asking for nothing back left the caret somewhere other than the end"
+    );
 }

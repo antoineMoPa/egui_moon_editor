@@ -438,7 +438,7 @@ impl Editor {
             .and_then(|index| request.completions.get(index))
             .cloned();
         if let Some(completion) = &completion_taken {
-            let from = insert_completion(ui.ctx(), text_id, &mut self.text, &completion.insert);
+            let from = insert_completion(ui.ctx(), text_id, &mut self.text, completion);
             self.highlighter.invalidate_from(from);
             self.completing.dismiss();
         }
@@ -478,13 +478,18 @@ impl Editor {
     }
 }
 
-/// Put `insert` into the text in place of the word being typed at the caret, leave the caret
-/// at the end of it, and say which line the change starts on.
+/// Put a taken candidate into the text in place of the word being typed at the caret, leave
+/// the caret where the candidate asked for it, and say which line the change starts on.
 ///
 /// The word is found around the caret here rather than carried over from the frame the
 /// candidates were worked out on: the buffer can have been typed into in between, and what is
 /// replaced has to be what is under the caret now. A caret on a space replaces nothing and the
 /// text is put in where it sits.
+///
+/// Where the caret is left is the end of the insertion less the candidate's
+/// [`Completion::caret_back`], which for a candidate that put a call in is inside the
+/// parentheses it just wrote. The distance is the caller's, and this is the only thing the
+/// editor does about it.
 ///
 /// The cursor is stored back into the text area's own state, after the fact, because the text
 /// area has already run this frame and is holding a cursor into the text as it was before.
@@ -492,14 +497,20 @@ fn insert_completion(
     ctx: &egui::Context,
     id: egui::Id,
     text: &mut String,
-    insert: &str,
+    completion: &Completion,
 ) -> usize {
+    let insert = &completion.insert;
     let at = caret_at(ctx, id, text).map_or(text.len(), |point| point.offset);
     let range = word_around(text, at).unwrap_or(at..at);
     let line = text_point(text, range.start).line;
     text.replace_range(range.clone(), insert);
 
-    let end = chars_before(text, range.start + insert.len());
+    let leave_at = range.start
+        + insert
+            .len()
+            .checked_sub(completion.caret_back)
+            .expect("a caret left further back than the insertion is long is nowhere");
+    let end = chars_before(text, leave_at);
     let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
     state
         .cursor
