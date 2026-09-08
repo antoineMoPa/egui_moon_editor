@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- TypeScript, TSX and JSX are highlighted. syntect bundles no TypeScript grammar of any kind, so
+  a `.ts` file used to be a page of grey text in an editor whose whole point is code; Microsoft's
+  TypeScript and TypeScriptReact grammars are now vendored under `grammars/` (Apache-2.0) and
+  folded into syntect's own set by a build script, which parses the YAML once at build time
+  rather than costing two seconds the first time a `.ts` file is opened. `.jsx` is read with the
+  TSX grammar, and `.mjs` and `.cjs` with the JavaScript one, through a table of the extensions
+  no grammar claims. Tags, tag attributes, enum members and the brackets TypeScript files under
+  its own scope names now land somewhere a theme has an opinion about.
+
 - A list of things to finish the word being typed with, drawn under the caret — or over it when
   the rows would run off the bottom of the screen. The caller fills it with `Completion`s and is
   told the word being typed, which one was taken and whether the list was put away; the editor

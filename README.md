@@ -37,4 +37,11 @@ cargo run --example edit -- src/lib.rs
 
 ## License
 
-MIT
+MIT, apart from the two grammars under `grammars/`.
+
+syntect bundles no TypeScript grammar of any kind, so `.ts` and `.tsx` files are read with
+Microsoft's TypeScript grammars, vendored from
+[TypeScript-Sublime-Plugin](https://github.com/microsoft/TypeScript-Sublime-Plugin) by way of
+[bat](https://github.com/sharkdp/bat), which is where the `.tmLanguage` originals were converted
+to the `.sublime-syntax` form syntect reads. Those two files are Apache-2.0, and the licence
+sits beside them as `grammars/LICENSE-Apache-2.0.txt`.

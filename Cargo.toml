@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "A code editor widget for egui: a text buffer, a line-number fringe, and marks drawn into the text"
 authors = ["Antoine M-P"]
-license = "MIT"
+license = "MIT AND Apache-2.0"
 repository = "https://github.com/antoineMoPa/egui_moon_editor"
 documentation = "https://docs.rs/egui_moon_editor"
 readme = "README.md"
@@ -18,7 +18,7 @@ exclude = [".github/"]
 
 [features]
 default = ["syntax"]
-## Syntax highlighting, via syntect's bundled grammars.
+## Syntax highlighting, via syntect's bundled grammars and the vendored TypeScript ones.
 syntax = ["dep:syntect"]
 
 [dependencies]
@@ -26,8 +26,23 @@ egui = "0.36"
 # regex-fancy rather than syntect's default regex-onig: onig builds oniguruma, which wants a C
 # toolchain, and a widget crate has to build wherever `cargo add` puts it. The themes, the HTML
 # output and the loaders are all things this crate does its own way, so none of them are wanted.
+#
+# `default-syntaxes` is not among them either: what is read at run time is the dump build.rs
+# wrote, which is those same bundled grammars with the vendored TypeScript ones folded in, so
+# asking for syntect's own copy as well would only put a second megabyte of grammars in the
+# binary. Reading a dump comes with `parsing`.
+syntect = { version = "5.3", default-features = false, features = [
+    "parsing",
+    "regex-fancy",
+], optional = true }
+
+# The same syntect, built for the build script, where it needs the two things the widget does
+# not: the bundled grammars to fold the vendored ones into, and a YAML reader to parse them
+# with. Both stay out of what ships.
+[build-dependencies]
 syntect = { version = "5.3", default-features = false, features = [
     "default-syntaxes",
+    "yaml-load",
     "regex-fancy",
 ], optional = true }
 

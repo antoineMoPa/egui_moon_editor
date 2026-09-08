@@ -243,18 +243,58 @@ fn painted_len(line: &str) -> usize {
 mod backend {
     use std::sync::OnceLock;
 
-    use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxReference, SyntaxSet};
+    use syntect::{
+        dumps::from_binary,
+        parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxReference, SyntaxSet},
+    };
 
     use super::{Token, TokenStyle, painted_len, plain_tokens, scopes::style_of_scope};
 
-    /// The bundled grammars, built once.
+    /// The grammars, read once from the dump `build.rs` wrote.
     ///
-    /// Building the set is some tens of milliseconds and the result is immutable, so it is
-    /// paid for by whoever opens the first file and never again.
+    /// That dump is syntect's bundled grammars with the vendored TypeScript ones folded in;
+    /// parsing the YAML those came from is a two-second job, which is why it happened at
+    /// build time. Reading the dump is about a millisecond, the result is immutable, and it
+    /// is paid for by whoever opens the first file and never again.
     fn grammars() -> &'static SyntaxSet {
         static GRAMMARS: OnceLock<SyntaxSet> = OnceLock::new();
-        // The newline variant: the grammars expect each line to still end in one.
-        GRAMMARS.get_or_init(SyntaxSet::load_defaults_newlines)
+        GRAMMARS.get_or_init(|| {
+            // Written by the same syntect this is compiled against, so a dump it cannot read
+            // is a broken build rather than anything a caller can do something about.
+            from_binary(include_bytes!(concat!(env!("OUT_DIR"), "/grammars.bin")))
+        })
+    }
+
+    /// Extensions no grammar in the set claims, and the grammar to read them with anyway.
+    ///
+    /// A row here is a language whose real grammar is not to hand, read with the nearest one
+    /// that is — so it is an admission as much as a mapping, and each row says what it costs.
+    /// An extension a grammar already claims never reaches this table: `.ts` and `.tsx` are
+    /// the vendored grammars' own, and are not rows.
+    const GRAMMARS_BY_EXTENSION: &[(&str, &str)] = &[
+        // JSX is JavaScript with tags in it, and TypeScript with tags in it is exactly what
+        // the TSX grammar reads. So a `.jsx` file comes out right: the approximation is only
+        // that the grammar would also read type annotations, which a `.jsx` file has none of.
+        ("jsx", "TypeScriptReact"),
+        // The bundled JavaScript grammar predates the module extensions and claims neither,
+        // though both are the language it reads.
+        ("mjs", "JavaScript"),
+        ("cjs", "JavaScript"),
+    ];
+
+    /// The grammar the table names for `extension`, if it has a row.
+    ///
+    /// A row naming a grammar the set does not hold is a mistake in the table rather than
+    /// anything about the file being opened, so it is a panic and not a fallback.
+    fn grammar_named_for(extension: &str) -> Option<&'static SyntaxReference> {
+        let (_, name) = GRAMMARS_BY_EXTENSION
+            .iter()
+            .find(|(known, _)| *known == extension)?;
+        Some(
+            grammars()
+                .find_syntax_by_name(name)
+                .unwrap_or_else(|| panic!("no grammar called {name} to read a .{extension} with")),
+        )
     }
 
     /// What a file is written in.
@@ -267,13 +307,19 @@ mod backend {
     impl Language {
         /// The language of a file at `path`, by its extension.
         ///
+        /// The grammars answer first, since a grammar knows which extensions are its own;
+        /// [`GRAMMARS_BY_EXTENSION`] is asked only about the ones none of them claim.
+        ///
         /// Falls back to plain and never fails: an editor asked to open something odd should
         /// show it, not refuse it.
         pub fn of_path(path: &str) -> Self {
             let Some(extension) = extension_of(path) else {
                 return Self::plain();
             };
-            Self(grammars().find_syntax_by_extension(extension))
+            match grammars().find_syntax_by_extension(extension) {
+                Some(syntax) => Self(Some(syntax)),
+                None => Self(grammar_named_for(extension)),
+            }
         }
 
         /// No language: everything comes back [`TokenStyle::Plain`].
@@ -497,6 +543,88 @@ mod tests {
         let lines = highlight(&Language::of_path("lib.rs"), text);
         assert_eq!(lines[0][0].style, TokenStyle::DocComment);
         assert_eq!(lines[1][0].style, TokenStyle::Comment);
+    }
+
+    /// The kinds of run a reader picks a `.ts` file out by, and what each has to come back
+    /// as. syntect bundles no TypeScript grammar at all, so before the vendored one every
+    /// line of this was a single plain run.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_typescript_file_is_read_as_typescript_down_to_its_type_annotations() {
+        let text = "// a note\nexport const greeting: string = \"hello\";\ninterface Shape { size: number }\n";
+        let lines = highlight(&Language::of_path("src/app.ts"), text);
+        assert_eq!(lines[0][0].style, TokenStyle::Comment);
+
+        let styles = |line: &Vec<Token>| -> Vec<TokenStyle> {
+            line.iter().map(|token| token.style).collect()
+        };
+        // `export` and `const`, then the `string` the annotation names — the annotation being
+        // the whole of what a JavaScript grammar would have had nothing to say about.
+        assert!(styles(&lines[1]).contains(&TokenStyle::Keyword), "{:?}", lines[1]);
+        assert!(styles(&lines[1]).contains(&TokenStyle::Type), "{:?}", lines[1]);
+        assert!(styles(&lines[1]).contains(&TokenStyle::StringLit), "{:?}", lines[1]);
+        // `interface`, and `Shape` as the type it names.
+        assert!(styles(&lines[2]).contains(&TokenStyle::Keyword), "{:?}", lines[2]);
+        assert!(styles(&lines[2]).contains(&TokenStyle::Type), "{:?}", lines[2]);
+    }
+
+    /// A tag is the thing a TypeScript grammar reading a `.tsx` file would get wrong — `<div`
+    /// is a comparison against a variable to it — so it is worth pinning that the file really
+    /// is read with the React grammar and not the plain one.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_tsx_file_reads_a_tag_as_a_tag_and_its_attribute_as_an_attribute() {
+        let line = "const row = <div className=\"row\">{name}</div>;\n";
+        let tokens = &highlight(&Language::of_path("src/Row.tsx"), line)[0];
+        let text_of = |style: TokenStyle| -> Vec<&str> {
+            tokens
+                .iter()
+                .filter(|token| token.style == style)
+                .map(|token| &line[token.range.clone()])
+                .collect()
+        };
+        assert!(text_of(TokenStyle::Type).contains(&"div"), "{tokens:?}");
+        assert!(
+            text_of(TokenStyle::Attribute).contains(&"className"),
+            "{tokens:?}"
+        );
+        assert!(
+            text_of(TokenStyle::StringLit).contains(&"\"row\""),
+            "{tokens:?}"
+        );
+    }
+
+    /// The one extension in the table that is a real approximation: `.jsx` is read with the
+    /// TSX grammar, because a grammar that knows tags is worth more than one that does not.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_jsx_file_is_read_with_the_tsx_grammar_rather_than_left_plain() {
+        let line = "const row = <div className=\"row\">{name}</div>;\n";
+        let styles: Vec<TokenStyle> = highlight(&Language::of_path("src/Row.jsx"), line)[0]
+            .iter()
+            .map(|token| token.style)
+            .collect();
+        assert!(styles.contains(&TokenStyle::Type), "{styles:?}");
+        assert!(styles.contains(&TokenStyle::Attribute), "{styles:?}");
+        assert!(styles.contains(&TokenStyle::Keyword), "{styles:?}");
+    }
+
+    /// A row naming a grammar that is not in the set would panic on the file it was written
+    /// for, which is a thing to find out here rather than when someone opens one.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn every_extension_the_table_stands_in_for_finds_the_grammar_it_names() {
+        for extension in ["jsx", "mjs", "cjs"] {
+            let styles: Vec<TokenStyle> =
+                highlight(&Language::of_path(&format!("file.{extension}")), "const x = 1;\n")[0]
+                    .iter()
+                    .map(|token| token.style)
+                    .collect();
+            assert!(
+                styles.contains(&TokenStyle::Keyword),
+                ".{extension} was read plainly: {styles:?}"
+            );
+        }
     }
 
     #[cfg(feature = "syntax")]

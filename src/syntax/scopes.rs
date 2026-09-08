@@ -30,6 +30,9 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     ("constant", TokenStyle::Constant),
     ("variable.other.constant", TokenStyle::Constant),
     ("support.constant", TokenStyle::Constant),
+    // An enum member is a named constant that happens to be filed under `variable`, which is
+    // what TypeScript calls `Colour.Red`.
+    ("variable.other.enummember", TokenStyle::Constant),
     // `let`, `fn`, `pub`, `async`: grammars file these under storage rather than keyword, but
     // to a reader they are the same kind of word.
     ("keyword", TokenStyle::Keyword),
@@ -51,6 +54,18 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     // the quotes around a string, and a reader wants those the colour of the thing they open
     // rather than the colour of a comma. Left out, they fall through to the scope enclosing
     // them, which is exactly that thing.
+    //
+    // The rows below are the exceptions, and they are exceptions because what encloses them
+    // has no look to fall through to. Sublime's own grammars file a bracket under
+    // `punctuation.section`, above; the TypeScript grammars file the same bracket under
+    // `punctuation.definition` or `meta.brace`, and without these rows every brace, paren and
+    // angle bracket in a `.ts` file would come back plain while the Rust file beside it had
+    // them punctuated.
+    ("punctuation.definition.block", TokenStyle::Punctuation),
+    ("punctuation.definition.parameters", TokenStyle::Punctuation),
+    ("punctuation.definition.typeparameters", TokenStyle::Punctuation),
+    ("punctuation.definition.tag", TokenStyle::Punctuation),
+    ("meta.brace", TokenStyle::Punctuation),
     // Names of things that have a shape.
     ("entity.name.type", TokenStyle::Type),
     ("entity.name.class", TokenStyle::Type),
@@ -166,6 +181,55 @@ mod tests {
         assert_eq!(
             style_of_scope("punctuation.separator.rust"),
             Some(TokenStyle::Punctuation)
+        );
+    }
+
+    /// The scopes below are what the vendored TypeScript grammars really hand back for a line
+    /// of JSX, and every one of them has to land somewhere: a tag that came out plain would
+    /// mean a `.tsx` file that parsed and still read grey.
+    #[test]
+    fn the_parts_of_a_jsx_tag_are_told_apart_rather_than_all_falling_through_to_plain() {
+        assert_eq!(
+            style_of_scope("entity.name.tag.tsx"),
+            Some(TokenStyle::Type)
+        );
+        assert_eq!(
+            style_of_scope("support.class.component.tsx"),
+            Some(TokenStyle::Type)
+        );
+        assert_eq!(
+            style_of_scope("entity.other.attribute-name.tsx"),
+            Some(TokenStyle::Attribute)
+        );
+        assert_eq!(
+            style_of_scope("punctuation.definition.tag.begin.tsx"),
+            Some(TokenStyle::Punctuation)
+        );
+        // The `{` and `}` around an expression in the middle of a tag.
+        assert_eq!(
+            style_of_scope("punctuation.section.embedded.begin.tsx"),
+            Some(TokenStyle::Punctuation)
+        );
+    }
+
+    /// The brackets a TypeScript file is full of are filed under names Sublime's own grammars
+    /// never use, so they need rows of their own to read like the brackets in any other file.
+    #[test]
+    fn the_brackets_typescript_files_under_its_own_names_are_still_punctuation() {
+        for scope in [
+            "punctuation.definition.block.ts",
+            "punctuation.definition.parameters.begin.ts",
+            "punctuation.definition.typeparameters.end.ts",
+            "meta.brace.round.ts",
+            "meta.brace.square.ts",
+        ] {
+            assert_eq!(style_of_scope(scope), Some(TokenStyle::Punctuation), "{scope}");
+        }
+        // Still not the quotes or the slashes, which keep the colour of what they open.
+        assert_eq!(style_of_scope("punctuation.definition.comment.ts"), None);
+        assert_eq!(
+            style_of_scope("punctuation.definition.string.begin.ts"),
+            None
         );
     }
 
