@@ -48,6 +48,7 @@
 
 mod completing;
 mod editor;
+mod indenting;
 mod place;
 mod style;
 mod syntax;
@@ -55,6 +56,7 @@ mod text;
 
 pub use completing::Completion;
 pub use editor::{Editor, EditorOutput, EditorRequest, Marks};
+pub use indenting::Indent;
 pub use place::{TextPoint, Word};
 pub use style::{EditorStyle, SyntaxTheme, TokenLook};
 pub use syntax::{Highlighter, Language, Token, TokenStyle, highlight};

@@ -20,9 +20,13 @@ exclude = [".github/"]
 default = ["syntax"]
 ## Syntax highlighting, via syntect's bundled grammars and the vendored TypeScript ones.
 syntax = ["dep:syntect"]
+## `serde` for the settings an application keeps in a file of its own - `Indent` above all,
+## which is a fact about a repo and so is something a repo tends to have written down.
+serde = ["dep:serde"]
 
 [dependencies]
 egui = "0.36"
+serde = { version = "1", features = ["derive"], optional = true }
 # regex-fancy rather than syntect's default regex-onig: onig builds oniguruma, which wants a C
 # toolchain, and a widget crate has to build wherever `cargo add` puts it. The themes, the HTML
 # output and the loaders are all things this crate does its own way, so none of them are wanted.

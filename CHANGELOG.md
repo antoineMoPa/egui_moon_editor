@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Tab indents by one level rather than typing a tab character, and shift-tab takes one level
+  off. What a level is is the caller's to say — `EditorRequest::indent`, four spaces until it
+  says otherwise, or a tab for a repo written in tabs — because how a file is indented is a
+  fact about the repo it belongs to. Anything selected indents every line it touches, so a
+  block moves in and out together; the `serde` feature puts `Indent` in an application's own
+  settings file.
+
 - TypeScript, TSX and JSX are highlighted. syntect bundles no TypeScript grammar of any kind, so
   a `.ts` file used to be a page of grey text in an editor whose whole point is code; Microsoft's
   TypeScript and TypeScriptReact grammars are now vendored under `grammars/` (Apache-2.0) and

@@ -5,6 +5,7 @@ use egui::{Align, Rect, Response, Ui, pos2, vec2};
 use crate::{
     completing,
     completing::{Completion, Listing},
+    indenting::{self, Indent},
     place::{
         TextPoint, Word, caret_at, chars_before, text_point, word_around, word_at, word_before,
         word_still_at,
@@ -56,6 +57,10 @@ pub struct EditorRequest<'a> {
     pub navigate_modifier: Option<egui::Modifiers>,
     /// What to offer under the caret. Empty offers nothing, which is the usual state.
     pub completions: &'a [Completion],
+    /// What a Tab press puts in. Four spaces until the caller says otherwise, because how a
+    /// file is indented is a fact about the repo it is in and the caller is what knows the
+    /// repo — see [`Indent`].
+    pub indent: Indent,
 }
 
 /// What drawing the editor turned up.
@@ -173,6 +178,34 @@ impl Editor {
         // where the caret was *before* the text area ran is what says where an edit happened
         // - and that can only be read back from the state under an id already known.
         let text_id = ui.id().with("moon-editor-text");
+        // The list of things to finish the word being typed with, settled before anything is
+        // drawn: whether it is on screen is what says who gets the arrows, Enter, Tab and
+        // Escape this frame, and the text area reads those the moment it runs.
+        self.completing.offered(request.completions);
+        let focused = request.focus || ui.memory(|memory| memory.has_focus(text_id));
+        let mut presses = completing::Presses::default();
+        if self.completing.showing(request.completions, focused) {
+            presses = completing::take_keys(ui, &mut self.completing, request.completions.len());
+        }
+        // Drawn only while it is still the answer to something: a list that was just taken
+        // from or put away is already gone by the time this frame is painted.
+        let drawing_list = self.completing.showing(request.completions, focused)
+            && presses.take.is_none()
+            && !presses.dismissed;
+
+        // Tab is one level of indentation, taken out of the events here and put into the text
+        // before the text area runs - which is also what stops egui typing a `\t`. Not while
+        // a list is on screen: there Tab takes the row under the keyboard, and `take_keys`
+        // above has already had it, and not while the keyboard is elsewhere, where a tab is
+        // egui moving the focus along.
+        let indented = match focused && !drawing_list {
+            true => indenting::take_tabs(ui, text_id, &mut self.text, request.indent),
+            false => None,
+        };
+        if let Some(line) = indented {
+            self.highlighter.invalidate_from(line);
+        }
+
         // The text is lent to the `TextEdit` below, so anything worked out from it is worked
         // out here: the layouter is handed the same text back and reads these.
         let byte_marks = char_ranges_to_bytes(&self.text, request.marks.ranges.iter().cloned());
@@ -193,21 +226,6 @@ impl Editor {
                 .and_then(|word| word_still_at(&self.text, word)),
             false => None,
         };
-
-        // The list of things to finish the word being typed with, settled before anything is
-        // drawn: whether it is on screen is what says who gets the arrows, Enter, Tab and
-        // Escape this frame, and the text area reads those the moment it runs.
-        self.completing.offered(request.completions);
-        let focused = request.focus || ui.memory(|memory| memory.has_focus(text_id));
-        let mut presses = completing::Presses::default();
-        if self.completing.showing(request.completions, focused) {
-            presses = completing::take_keys(ui, &mut self.completing, request.completions.len());
-        }
-        // Drawn only while it is still the answer to something: a list that was just taken
-        // from or put away is already gone by the time this frame is painted.
-        let drawing_list = self.completing.showing(request.completions, focused)
-            && presses.take.is_none()
-            && !presses.dismissed;
 
         let mut marks_laid_out = 0;
         let mut clicked_completion: Option<usize> = None;

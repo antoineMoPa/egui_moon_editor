@@ -73,6 +73,55 @@ fn typing_into_the_editor_changes_the_text_it_holds() {
     );
 }
 
+/// Tab is indentation, not a tab character: what goes in is what the caller asked for, so a
+/// repo that indents in four spaces gets four spaces and one that indents in tabs gets a tab.
+fn text_after_a_tab(indent: egui_moon_editor::Indent) -> String {
+    let text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let out = std::sync::Arc::clone(&text);
+
+    let mut editor = Editor::new("fn one() {}".to_string());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 200.0))
+        .build_ui(move |ui| {
+            let style = EditorStyle::from_visuals(ui.visuals());
+            let output = editor.ui(
+                ui,
+                &style,
+                &EditorRequest {
+                    indent,
+                    ..Default::default()
+                },
+            );
+            output.response.request_focus();
+            *out.lock().unwrap() = editor.text().to_string();
+        });
+
+    harness.run_steps(4);
+    // Typed into first, which is what leaves a caret in the text for the tab to land at.
+    harness.get_by_role(Role::MultilineTextInput).type_text("x");
+    harness.run_steps(4);
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(4);
+
+    text.lock().unwrap().clone()
+}
+
+#[test]
+fn a_tab_puts_four_spaces_in() {
+    assert_eq!(
+        text_after_a_tab(egui_moon_editor::Indent::default()),
+        "fn one() {}x    "
+    );
+}
+
+#[test]
+fn a_repo_that_indents_with_tabs_gets_a_tab() {
+    assert_eq!(
+        text_after_a_tab(egui_moon_editor::Indent::Tab),
+        "fn one() {}x\t"
+    );
+}
+
 /// The marks are input and the tally is output: the widget says how many it laid out, and
 /// where the current one landed once it has been asked to select it.
 #[test]
