@@ -73,6 +73,74 @@ fn typing_into_the_editor_changes_the_text_it_holds() {
     );
 }
 
+/// A line typed into text with a base to compare against is new the moment it is there, and
+/// the line it was typed under is not.
+#[test]
+fn a_line_typed_in_is_marked_new() {
+    let new_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let out = std::sync::Arc::clone(&new_lines);
+
+    let committed = "fn one() {}".to_string();
+    let mut editor = Editor::new(committed.clone());
+    editor.set_base(Some(committed));
+    assert!(editor.new_lines().is_empty(), "the text as committed has nothing new");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 200.0))
+        .build_ui(move |ui| {
+            let style = EditorStyle::from_visuals(ui.visuals());
+            let output = editor.ui(ui, &style, &EditorRequest::default());
+            output.response.request_focus();
+            *out.lock().unwrap() = editor.new_lines().to_vec();
+        });
+
+    harness.run_steps(4);
+    harness.key_press(egui::Key::End);
+    harness.get_by_role(Role::MultilineTextInput).type_text("\nfn two() {}");
+    // A second on, a step being a quarter of one: still waiting for the typing to stop.
+    harness.run_steps(4);
+    assert!(new_lines.lock().unwrap().is_empty(), "marked while typing");
+    // Past the three seconds of quiet.
+    harness.run_steps(12);
+
+    // The first line gained a newline, which a comparison by line counts as a change to it.
+    assert_eq!(*new_lines.lock().unwrap(), vec![0..2]);
+}
+
+/// Enter at the end of a title with a blank line already under it: the bar goes beside the
+/// blank line the caret went down onto, not the one that was there before.
+#[test]
+fn enter_under_a_title_marks_the_line_it_opened() {
+    let new_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let out = std::sync::Arc::clone(&new_lines);
+
+    let committed = "# moon-dev-tools\n\nA collection of tools.\n".to_string();
+    let mut editor = Editor::new(committed.clone());
+    editor.set_base(Some(committed));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 200.0))
+        .build_ui(move |ui| {
+            let style = EditorStyle::from_visuals(ui.visuals());
+            let output = editor.ui(ui, &style, &EditorRequest::default());
+            output.response.request_focus();
+            *out.lock().unwrap() = editor.new_lines().to_vec();
+        });
+
+    harness.run_steps(4);
+    // Focus leaves the caret at the end of the text, so up to the title and then to the end
+    // of it.
+    for _ in 0..3 {
+        harness.key_press(egui::Key::ArrowUp);
+    }
+    harness.key_press(egui::Key::End);
+    // A key rather than typed text: egui takes a line break from Enter, and drops a text
+    // event that is nothing but one.
+    harness.key_press(egui::Key::Enter);
+    // Past the three seconds of quiet the comparison waits for, a step being a quarter of one.
+    harness.run_steps(16);
+
+    assert_eq!(*new_lines.lock().unwrap(), vec![1..2]);
+}
+
 /// Tab is indentation, not a tab character: what goes in is what the caller asked for, so a
 /// repo that indents in four spaces gets four spaces and one that indents in tabs gets a tab.
 fn text_after_a_tab(indent: egui_moon_editor::Indent) -> String {

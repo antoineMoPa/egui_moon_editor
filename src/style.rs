@@ -103,6 +103,12 @@ pub struct EditorStyle {
     pub fringe_ink: Color32,
     /// How wide the fringe of line numbers is. The default is wide enough for five digits.
     pub fringe_width: f32,
+    /// What the bar down the right of the fringe is drawn in, beside the lines the text it is
+    /// compared against does not have - see [`Editor::set_base`](crate::Editor::set_base).
+    pub new_line_ink: Color32,
+    /// How wide that bar is. It sits inside [`fringe_width`](Self::fringe_width), between
+    /// the numbers and the code.
+    pub new_line_bar_width: f32,
     /// Between the edge of the text area and the text in it. This is what a [`egui::TextEdit`]
     /// keeps clear by default, and it is set here because the frame around the text is the
     /// widget's own.
@@ -180,6 +186,10 @@ const DEFAULT_INKS: &[(TokenStyle, u32, u32)] = &[
     (TokenStyle::Attribute, 0x8a6a12, 0xe7bd58),
 ];
 
+/// The green of the bar beside a new line, on a light ground and on a dark one. egui's visuals
+/// have no green of their own to take it from.
+const DEFAULT_NEW_LINE_INKS: (u32, u32) = (0x247045, 0x72d89c);
+
 /// A colour written the way the table above writes it.
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb(
@@ -210,6 +220,11 @@ impl EditorStyle {
             line_number_font: FontId::monospace(DEFAULT_CODE_SIZE - 1.0),
             fringe_ink: muted,
             fringe_width: 46.0,
+            new_line_ink: rgb(match visuals.dark_mode {
+                false => DEFAULT_NEW_LINE_INKS.0,
+                true => DEFAULT_NEW_LINE_INKS.1,
+            }),
+            new_line_bar_width: 3.0,
             text_margin: Margin::symmetric(4, 2),
             mark_ink: accent.linear_multiply(0.35),
             current_mark_ink: accent,

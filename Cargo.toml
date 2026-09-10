@@ -27,6 +27,9 @@ serde = ["dep:serde"]
 [dependencies]
 egui = "0.36"
 serde = { version = "1", features = ["derive"], optional = true }
+# The line diff behind the bar the fringe draws beside a line the text it is compared against
+# does not have. Its timeout is what keeps a comparison run after every edit inside a frame.
+similar = "3.2"
 # regex-fancy rather than syntect's default regex-onig: onig builds oniguruma, which wants a C
 # toolchain, and a widget crate has to build wherever `cargo add` puts it. The themes, the HTML
 # output and the loaders are all things this crate does its own way, so none of them are wanted.

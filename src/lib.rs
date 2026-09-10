@@ -2,7 +2,8 @@
 //!
 //! egui's [`TextEdit`](egui::TextEdit) is a text box. This is the rest of what makes an
 //! editor: a fringe of line numbers that scrolls down the page with the code and stays put as
-//! the code slides sideways under it, a page that fills the space it was given rather than a
+//! the code slides sideways under it, with a bar down its right beside the lines that are new
+//! since a text it is compared against, a page that fills the space it was given rather than a
 //! box the size of the text in it, marks tinted into the text, and a way to select a range
 //! and be told where on screen it landed.
 //!
@@ -46,6 +47,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::doc_markdown)]
 
+mod changes;
 mod completing;
 mod editor;
 mod indenting;

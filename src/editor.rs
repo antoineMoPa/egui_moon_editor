@@ -3,6 +3,7 @@ use std::ops::Range;
 use egui::{Align, Rect, Response, Ui, pos2, vec2};
 
 use crate::{
+    changes::NewLines,
     completing,
     completing::{Completion, Listing},
     indenting::{self, Indent},
@@ -126,6 +127,9 @@ pub struct Editor {
     /// whether it has been put away. The caller says what is in the list; which row the
     /// keyboard is on is the editor's, since the editor is what draws the rows.
     completing: Listing,
+    /// The lines of the text that the text it is compared against does not have, drawn as a
+    /// bar down the right of the fringe - and when to look again after the text is typed into.
+    new_lines: NewLines,
 }
 
 impl Editor {
@@ -138,6 +142,7 @@ impl Editor {
             highlighter: Highlighter::new(Language::plain()),
             hovered_word: None,
             completing: Listing::default(),
+            new_lines: NewLines::default(),
         }
     }
 
@@ -154,6 +159,24 @@ impl Editor {
         // and not the word the pointer was over, which was a word of the text that is gone.
         self.highlighter = Highlighter::new(self.language.clone());
         self.hovered_word = None;
+        self.new_lines.text_replaced(&self.text);
+    }
+
+    /// Compare the text against `base` from here on, and mark the lines of it that `base`
+    /// does not have with a bar down the right of the fringe - the file as it was last
+    /// committed, say, so what has been written since stands out. `None` marks nothing.
+    ///
+    /// Typing is only compared once the text has been left alone for a few seconds, and a bar
+    /// that turns up then fades in, so the fringe does not flicker along with every keystroke.
+    pub fn set_base(&mut self, base: Option<String>) {
+        self.new_lines.set_base(base, &self.text);
+    }
+
+    /// The lines the fringe marks as new, as ranges of line indexes counted from zero, in
+    /// order - which, while the text is being typed into, is what it marked before the typing
+    /// began. Empty with no base.
+    pub fn new_lines(&self) -> &[Range<usize>] {
+        self.new_lines.lines()
     }
 
     /// Read the text as `language` from here on, the way opening a file at a path does.
@@ -240,6 +263,7 @@ impl Editor {
             text,
             highlighter,
             completing: listing,
+            new_lines,
             ..
         } = self;
 
@@ -321,6 +345,27 @@ impl Editor {
                             if request.focus {
                                 output.response.request_focus();
                             }
+                            // An edit moves the bars below it with their lines; the comparison
+                            // itself waits for the typing to stop, and is told where the caret
+                            // was left, which is where the typing was. The edit starts at the
+                            // earliest line anything happened on.
+                            let now = ui.input(|input| input.time);
+                            if output.response.changed() || indented.is_some() {
+                                let caret = caret_at(ui.ctx(), text_id, text.as_str())
+                                    .map(|point| point.line);
+                                let at = [caret_before, caret, indented]
+                                    .into_iter()
+                                    .flatten()
+                                    .min()
+                                    .unwrap_or(0);
+                                new_lines.edited(text.as_str(), at, caret, now);
+                            }
+                            // Nothing else may draw a frame once the typing stops, so the
+                            // fringe asks for the one its comparison is due on, and for every
+                            // frame of a fade.
+                            if let Some(after) = new_lines.settle(text.as_str(), now) {
+                                ui.ctx().request_repaint_after(after);
+                            }
 
                             // The word under the pointer, found in the text as it was just
                             // laid out - so what is reported is this frame's, and only the
@@ -360,8 +405,8 @@ impl Editor {
                             if let Some(wanted) = request.line_of_interest {
                                 line_at = rows
                                     .iter()
-                                    .zip(line_numbers(rows))
-                                    .find(|(_, line)| *line == Some(wanted))
+                                    .zip(row_lines(rows))
+                                    .find(|(_, line)| line.starts && line.number == wanted)
                                     .map(|(placed, _)| {
                                         Rect::from_min_size(
                                             pos2(output.galley_pos.x, top + placed.pos.y),
@@ -374,16 +419,30 @@ impl Editor {
                             // stops where it ends, rather than walking the file every frame.
                             let first =
                                 rows.partition_point(|placed| top + placed.pos.y < visible.min);
-                            for (placed, line) in rows.iter().zip(line_numbers(rows)).skip(first) {
-                                let Some(line) = line else { continue };
+                            for (placed, line) in rows.iter().zip(row_lines(rows)).skip(first) {
                                 let y = top + placed.pos.y;
                                 if y > visible.max {
                                     break;
                                 }
+                                // Every row of a new line, the rest of one that wraps included,
+                                // so the bar runs the height of what is new.
+                                if let Some(opacity) = new_lines.opacity(line.number - 1, now) {
+                                    painter.rect_filled(
+                                        Rect::from_min_max(
+                                            pos2(fringe.max.x - style.new_line_bar_width, y),
+                                            pos2(fringe.max.x, y + placed.rect().height()),
+                                        ),
+                                        0.0,
+                                        style.new_line_ink.gamma_multiply(opacity),
+                                    );
+                                }
+                                if !line.starts {
+                                    continue;
+                                }
                                 painter.text(
                                     pos2(fringe.max.x - 6.0, y),
                                     egui::Align2::RIGHT_TOP,
-                                    line.to_string(),
+                                    line.number.to_string(),
                                     style.line_number_font.clone(),
                                     style.fringe_ink,
                                 );
@@ -458,6 +517,9 @@ impl Editor {
         if let Some(completion) = &completion_taken {
             let from = insert_completion(ui.ctx(), text_id, &mut self.text, completion);
             self.highlighter.invalidate_from(from);
+            let caret = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
+            let now = ui.input(|input| input.time);
+            self.new_lines.edited(&self.text, from, caret, now);
             self.completing.dismiss();
         }
 
@@ -539,26 +601,33 @@ fn insert_completion(
     line
 }
 
-/// The number of the line each row of a galley starts, counting from one the way the fringe
-/// shows them, and nothing for a row that is the rest of a line the row above began.
+/// The line a row of a galley is part of.
+#[derive(Clone, Copy)]
+struct RowLine {
+    /// Counting from one, the way the fringe shows it.
+    number: usize,
+    /// Whether the row is where the line starts, rather than the rest of a line the row above
+    /// began. Only such a row gets a number in the fringe.
+    starts: bool,
+}
+
+/// The line each row of a galley is part of.
 ///
 /// A row only starts a line when the row before it ended in a newline, so a number cannot be
 /// read off a row's index: it has to be carried down from the top of the galley. Which is why
 /// this is an iterator and a caller looking only at the rows on screen still steps over the
 /// ones above them - stepping is all it does there, no number is written and nothing is
 /// painted.
-fn line_numbers(
-    rows: &[egui::epaint::text::PlacedRow],
-) -> impl Iterator<Item = Option<usize>> + use<'_> {
-    let mut line = 0;
+fn row_lines(rows: &[egui::epaint::text::PlacedRow]) -> impl Iterator<Item = RowLine> + use<'_> {
+    let mut number = 0;
     let mut starts_line = true;
     rows.iter().map(move |placed| {
         let starts = starts_line;
         starts_line = placed.ends_with_newline;
-        starts.then(|| {
-            line += 1;
-            line
-        })
+        if starts {
+            number += 1;
+        }
+        RowLine { number, starts }
     })
 }
 
