@@ -25,19 +25,19 @@ mod grammars {
         parsing::{SyntaxDefinition, SyntaxSet},
     };
 
-    /// The vendored grammars, by the name of their file in `grammars/`.
+    /// The grammars in `grammars/`, by the name of their file.
     ///
     /// syntect's bundled set has no TypeScript of any kind in it — not `.ts`, not `.tsx` —
-    /// and this is the whole of what is added to make up for that. See the notice at the top
-    /// of either file for where it came from and under what licence.
-    const VENDORED: &[&str] = &["TypeScript", "TypeScriptReact"];
+    /// and no Rhai, and these are the whole of what is added to make up for that. See the
+    /// notice at the top of each file for where it came from and under what licence.
+    const ADDED_GRAMMARS: &[&str] = &["TypeScript", "TypeScriptReact", "Rhai"];
 
-    /// Fold the vendored grammars into syntect's bundled ones and write the lot to `OUT_DIR`.
+    /// Fold the added grammars into syntect's bundled ones and write the lot to `OUT_DIR`.
     pub(super) fn write_dump() {
         // The newline variant, because the crate hands each line to the parser with its
         // newline still on it.
         let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
-        for name in VENDORED {
+        for name in ADDED_GRAMMARS {
             let path = PathBuf::from("grammars").join(format!("{name}.sublime-syntax"));
             println!("cargo::rerun-if-changed={}", path.display());
             let yaml = fs::read_to_string(&path)

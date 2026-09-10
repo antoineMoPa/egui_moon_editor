@@ -252,7 +252,7 @@ mod backend {
 
     /// The grammars, read once from the dump `build.rs` wrote.
     ///
-    /// That dump is syntect's bundled grammars with the vendored TypeScript ones folded in;
+    /// That dump is syntect's bundled grammars with the TypeScript and Rhai ones folded in;
     /// parsing the YAML those came from is a two-second job, which is why it happened at
     /// build time. Reading the dump is about a millisecond, the result is immutable, and it
     /// is paid for by whoever opens the first file and never again.
@@ -592,6 +592,65 @@ mod tests {
             text_of(TokenStyle::StringLit).contains(&"\"row\""),
             "{tokens:?}"
         );
+    }
+
+    /// The kinds of run a Rhai script is made of, taken from the extensions of the application
+    /// this crate was written for, which are where most `.rhai` files a user of it opens come
+    /// from. syntect bundles no Rhai grammar, so before the one in `grammars/` every line of
+    /// this was a single plain run.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_rhai_script_is_read_as_rhai_down_to_the_code_inside_its_backtick_strings() {
+        let text = "//! what the script is for\n\
+                    /// what the function is for\n\
+                    fn greet(name) {\n\
+                    \x20   let about = `hello ${name.to_upper()}`;\n\
+                    \x20   #{ count: 2, said: \"hi\" }\n\
+                    }\n";
+        let lines = highlight(&Language::of_path("extensions/files.rhai"), text);
+        let text_of = |line: usize, style: TokenStyle| -> Vec<&str> {
+            let source = text.lines().nth(line).unwrap();
+            lines[line]
+                .iter()
+                .filter(|token| token.style == style)
+                .map(|token| &source[token.range.clone()])
+                .collect()
+        };
+
+        assert_eq!(text_of(0, TokenStyle::DocComment), ["//! what the script is for"]);
+        assert_eq!(text_of(1, TokenStyle::DocComment), ["/// what the function is for"]);
+        assert_eq!(text_of(2, TokenStyle::Keyword), ["fn"]);
+        assert_eq!(text_of(2, TokenStyle::Function), ["greet"]);
+
+        assert_eq!(text_of(3, TokenStyle::Keyword), ["let"]);
+        assert_eq!(text_of(3, TokenStyle::StringLit), ["`hello ", "`"]);
+        // The call inside `${ }` is code, not more of the string around it.
+        assert_eq!(text_of(3, TokenStyle::Function), ["to_upper"]);
+
+        assert_eq!(text_of(4, TokenStyle::Number), ["2"]);
+        assert_eq!(text_of(4, TokenStyle::StringLit), ["\"hi\""]);
+    }
+
+    /// Rhai's block comments nest, which a grammar borrowed from a language whose comments do
+    /// not would get wrong: the first `*/` would end the comment, and the rest of it would be
+    /// read as code.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_rhai_block_comment_ends_at_the_close_of_the_outermost_one() {
+        let line = "/* outer /* inner */ still outer */ let x = 1;";
+        let tokens = &highlight(&Language::of_path("script.rhai"), line)[0];
+        let text_of = |style: TokenStyle| -> Vec<&str> {
+            tokens
+                .iter()
+                .filter(|token| token.style == style)
+                .map(|token| &line[token.range.clone()])
+                .collect()
+        };
+        assert_eq!(
+            text_of(TokenStyle::Comment),
+            ["/* outer /* inner */ still outer */"]
+        );
+        assert_eq!(text_of(TokenStyle::Keyword), ["let"]);
     }
 
     /// The one extension in the table that is a real approximation: `.jsx` is read with the

@@ -18,7 +18,8 @@ exclude = [".github/"]
 
 [features]
 default = ["syntax"]
-## Syntax highlighting, via syntect's bundled grammars and the vendored TypeScript ones.
+## Syntax highlighting, via syntect's bundled grammars and the TypeScript and Rhai ones in
+## `grammars/`.
 syntax = ["dep:syntect"]
 ## `serde` for the settings an application keeps in a file of its own - `Indent` above all,
 ## which is a fact about a repo and so is something a repo tends to have written down.
@@ -35,7 +36,7 @@ similar = "3.2"
 # output and the loaders are all things this crate does its own way, so none of them are wanted.
 #
 # `default-syntaxes` is not among them either: what is read at run time is the dump build.rs
-# wrote, which is those same bundled grammars with the vendored TypeScript ones folded in, so
+# wrote, which is those same bundled grammars with the ones in `grammars/` folded in, so
 # asking for syntect's own copy as well would only put a second megabyte of grammars in the
 # binary. Reading a dump comes with `parsing`.
 syntect = { version = "5.3", default-features = false, features = [

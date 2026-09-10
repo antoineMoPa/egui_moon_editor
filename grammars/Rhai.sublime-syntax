@@ -1,0 +1,209 @@
+%YAML 1.2
+---
+# Rhai (https://rhai.rs), written for this crate rather than taken from anywhere, and under the
+# crate's own licence. The grammars rhaiscript publishes are MPL-2.0 and in the tmLanguage form
+# syntect does not read, and Rhai is small enough to write out directly in the scope names
+# src/syntax/scopes.rs already has rows for.
+# http://www.sublimetext.com/docs/3/syntax.html
+name: Rhai
+file_extensions:
+  - rhai
+scope: source.rhai
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+  escape: '\\(?:x\h{2}|u\h{4}|U\h{8}|\n|.)'
+
+contexts:
+  main:
+    - match: '^#!.*$\n?'
+      scope: comment.line.shebang.rhai
+    - include: expressions
+
+  expressions:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: declarations
+    - include: keywords
+    - include: calls
+    - include: operators
+    - include: punctuation
+
+  comments:
+    # `//!` documents the script it opens, `///` the function below it.
+    - match: '(?:///(?!/)|//!).*$\n?'
+      scope: comment.line.documentation.rhai
+    - match: '//.*$\n?'
+      scope: comment.line.double-slash.rhai
+    - match: '/\*\*(?![*/])'
+      push: documentation-block
+    - match: '/\*'
+      push: comment-block
+
+  # Rhai's block comments nest, so a `*/` closes only the innermost `/*`.
+  documentation-block:
+    - meta_scope: comment.block.documentation.rhai
+    - match: '\*/'
+      pop: true
+    - match: '/\*'
+      push: comment-block
+
+  comment-block:
+    - meta_scope: comment.block.rhai
+    - match: '\*/'
+      pop: true
+    - match: '/\*'
+      push: comment-block
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.rhai
+      push: string-double
+    - match: "'"
+      scope: punctuation.definition.string.begin.rhai
+      push: character
+    - match: '`'
+      scope: punctuation.definition.string.begin.rhai
+      push: string-backtick
+
+  # A double-quoted string runs to the end of its line unless the line ends in `\`, which is
+  # an escape of the newline and carries it on.
+  string-double:
+    - meta_scope: string.quoted.double.rhai
+    - match: '"'
+      scope: punctuation.definition.string.end.rhai
+      pop: true
+    - match: '{{escape}}'
+      scope: constant.character.escape.rhai
+    - match: '$\n?'
+      pop: true
+
+  character:
+    - meta_scope: string.quoted.single.rhai
+    - match: "'"
+      scope: punctuation.definition.string.end.rhai
+      pop: true
+    - match: '{{escape}}'
+      scope: constant.character.escape.rhai
+    - match: '$\n?'
+      pop: true
+
+  # A backtick string is literal text over as many lines as it takes, with code in it
+  # wherever a `${` opens some.
+  string-backtick:
+    - meta_scope: string.template.rhai
+    - match: '`'
+      scope: punctuation.definition.string.end.rhai
+      pop: true
+    - match: '\$\{'
+      scope: punctuation.section.interpolation.begin.rhai
+      push: interpolation
+
+  # The code inside `${ }`, which is code rather than string: the string's scope is cleared so
+  # a name in there reads as a name.
+  interpolation:
+    - clear_scopes: 1
+    - meta_scope: meta.interpolation.rhai
+    - match: '\}'
+      scope: punctuation.section.interpolation.end.rhai
+      pop: true
+    - include: interpolation-braces
+
+  # A block or a map inside `${ }` has a `}` of its own, which must not be taken for the
+  # interpolation's.
+  interpolation-braces:
+    - match: '#?\{'
+      scope: punctuation.section.block.begin.rhai
+      push: interpolation-block
+    - include: expressions
+
+  interpolation-block:
+    - match: '\}'
+      scope: punctuation.section.block.end.rhai
+      pop: true
+    - include: interpolation-braces
+
+  numbers:
+    - match: '\b0x[0-9A-Fa-f_]+\b'
+      scope: constant.numeric.integer.hexadecimal.rhai
+    - match: '\b0o[0-7_]+\b'
+      scope: constant.numeric.integer.octal.rhai
+    - match: '\b0b[01_]+\b'
+      scope: constant.numeric.integer.binary.rhai
+    # A digit is required after the point, so the `..` of `1..10` is left to be a range.
+    - match: '\b[0-9][0-9_]*(?:\.[0-9][0-9_]*)?[eE][+-]?[0-9_]+\b'
+      scope: constant.numeric.float.rhai
+    - match: '\b[0-9][0-9_]*\.[0-9][0-9_]*\b'
+      scope: constant.numeric.float.rhai
+    - match: '\b[0-9][0-9_]*\b'
+      scope: constant.numeric.integer.rhai
+
+  declarations:
+    # `fn name(`, and `fn Type.name(` for a method only a value of that type has.
+    - match: '\b(?:(private)\s+)?(fn)\s+(?:({{identifier}})\s*(\.)\s*)?({{identifier}})'
+      captures:
+        1: storage.modifier.rhai
+        2: storage.type.function.rhai
+        3: entity.name.type.rhai
+        4: punctuation.accessor.rhai
+        5: entity.name.function.rhai
+    - match: '\b(?:let|const|fn)\b'
+      scope: storage.type.rhai
+    - match: '\bprivate\b'
+      scope: storage.modifier.rhai
+
+  # Ahead of `calls`, so `if (` and `while (` read as the words they are rather than as calls.
+  keywords:
+    - match: '\b(?:if|else|switch)\b'
+      scope: keyword.control.conditional.rhai
+    - match: '\b(?:for|in|loop|do|while|until|break|continue)\b'
+      scope: keyword.control.loop.rhai
+    - match: '\b(?:return|throw|try|catch)\b'
+      scope: keyword.control.flow.rhai
+    - match: '\b(?:import|export|as)\b'
+      scope: keyword.control.import.rhai
+    - match: '\bthis\b'
+      scope: variable.language.this.rhai
+    - match: '\b(?:true|false)\b'
+      scope: constant.language.boolean.rhai
+    - match: '({{identifier}})\s*(::)'
+      captures:
+        1: entity.name.namespace.rhai
+        2: punctuation.accessor.rhai
+
+  calls:
+    - match: '{{identifier}}(?=\s*\()'
+      scope: variable.function.rhai
+
+  operators:
+    - match: '!in\b'
+      scope: keyword.operator.containment.rhai
+    - match: '\?\?'
+      scope: keyword.operator.coalesce.rhai
+    - match: '\?\.'
+      scope: punctuation.accessor.rhai
+    - match: '\.\.=?'
+      scope: keyword.operator.range.rhai
+    - match: '=>'
+      scope: keyword.operator.arrow.rhai
+    - match: '\*\*=?|<<=?|>>=?|&&|\|\||==|!=|<=|>=|[-+*/%&|^<>]=?|[=!?]'
+      scope: keyword.operator.rhai
+
+  punctuation:
+    - match: '\.'
+      scope: punctuation.accessor.rhai
+    - match: ','
+      scope: punctuation.separator.comma.rhai
+    - match: ';'
+      scope: punctuation.terminator.rhai
+    - match: ':'
+      scope: punctuation.separator.key-value.rhai
+    - match: '#\{'
+      scope: punctuation.section.mapping.begin.rhai
+    - match: '[{}]'
+      scope: punctuation.section.block.rhai
+    - match: '[()]'
+      scope: punctuation.section.group.rhai
+    - match: '[\[\]]'
+      scope: punctuation.section.brackets.rhai

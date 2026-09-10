@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Rhai is highlighted. syntect bundles no Rhai grammar and the ones rhaiscript publishes are
+  MPL-2.0 tmLanguage files, so `grammars/Rhai.sublime-syntax` is written for this crate, under
+  its licence, in the scope names the theme already reads. The code inside a backtick string's
+  `${ }` reads as code rather than as more of the string, and block comments nest the way Rhai's
+  do.
+
 - Tab indents by one level rather than typing a tab character, and shift-tab takes one level
   off. What a level is is the caller's to say — `EditorRequest::indent`, four spaces until it
   says otherwise, or a tab for a repo written in tabs — because how a file is indented is a
