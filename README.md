@@ -18,6 +18,9 @@ egui's `TextEdit` is a text box. This crate is the rest of what makes an editor:
 - a list under the caret of things to finish the word being typed with, keyboard-driven: the
   caller offers the candidates and is told which one was taken, and the editor draws them and
   puts the chosen one into the text
+- a column left of the numbers for notes about stretches of lines — who last touched them and
+  when, say — each written once at the top of its stretch, with a rule where the next begins;
+  the caller says what the notes read, and is told which one the pointer is on or clicked
 
 ```rust
 let style = egui_moon_editor::EditorStyle::from_visuals(ui.visuals());

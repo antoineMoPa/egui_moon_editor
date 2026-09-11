@@ -4,8 +4,9 @@
 //! editor: a fringe of line numbers that scrolls down the page with the code and stays put as
 //! the code slides sideways under it, with a bar down its right beside the lines that are new
 //! since a text it is compared against, a page that fills the space it was given rather than a
-//! box the size of the text in it, marks tinted into the text, and a way to select a range
-//! and be told where on screen it landed.
+//! box the size of the text in it, marks tinted into the text, a way to select a range and
+//! be told where on screen it landed, and a column left of the numbers for notes about
+//! stretches of lines - who last touched them, say - written once at the top of each stretch.
 //!
 //! # The seam
 //!
@@ -51,6 +52,7 @@ mod changes;
 mod completing;
 mod editor;
 mod indenting;
+mod notes;
 mod place;
 mod style;
 mod syntax;
@@ -59,6 +61,7 @@ mod text;
 pub use completing::Completion;
 pub use editor::{Editor, EditorOutput, EditorRequest, Marks, Underline};
 pub use indenting::Indent;
+pub use notes::LineNote;
 pub use place::{TextPoint, Word};
 pub use style::{EditorStyle, SyntaxTheme, TokenLook};
 pub use syntax::{Highlighter, Language, Token, TokenStyle, highlight};

@@ -144,6 +144,20 @@ pub struct EditorStyle {
     pub completion_gap: f32,
     /// Between the edge of the list and the rows in it.
     pub completion_margin: Margin,
+    /// The font a note in the column left of the line numbers is set in - see
+    /// [`LineNote`](crate::LineNote). Monospace, like the rest: the column is sized in
+    /// characters of it.
+    pub note_font: FontId,
+    /// The ink a note's title is written in, unless the note names its own.
+    pub note_ink: Color32,
+    /// The ink a note's detail is written in: quieter than the title, the way the line
+    /// numbers are quieter than the code.
+    pub note_detail_ink: Color32,
+    /// The rule across the column where one note's stretch ends and the next begins.
+    pub note_rule_ink: Color32,
+    /// How wide the column of notes may grow, in characters. A note longer than that is cut
+    /// with an ellipsis, so one long note does not push the code off the page.
+    pub note_max_chars: usize,
     /// How each kind of token is drawn. [`ink`](Self::ink) and [`font`](Self::font) still say
     /// what the text area is worth on its own — the caret, the selection, the size the rows
     /// are measured at — and this says what each run inside it looks like.
@@ -166,6 +180,10 @@ const DEFAULT_COMPLETION_WIDTH: f32 = 280.0;
 /// How many rows of that list are on screen at once. Enough to see that there is a choice,
 /// few enough that the list does not become the page.
 const DEFAULT_COMPLETION_ROWS: usize = 8;
+
+/// How wide the column of notes may grow, in characters: room for a short hash, a date and a
+/// name, which is what a note about who last touched a line comes to.
+const DEFAULT_NOTE_MAX_CHARS: usize = 44;
 
 /// The ink each kind of token gets on a light ground, and on a dark one.
 ///
@@ -238,6 +256,11 @@ impl EditorStyle {
             completion_row_pad: 6.0,
             completion_gap: 3.0,
             completion_margin: Margin::same(3),
+            note_font: FontId::monospace(DEFAULT_CODE_SIZE - 1.0),
+            note_ink: ink,
+            note_detail_ink: muted,
+            note_rule_ink: visuals.widgets.noninteractive.bg_stroke.color,
+            note_max_chars: DEFAULT_NOTE_MAX_CHARS,
             syntax: SyntaxTheme::from_fn(|style| TokenLook {
                 ink: default_ink(style, visuals.dark_mode, ink, muted),
                 font: FontId::monospace(DEFAULT_CODE_SIZE),

@@ -7,6 +7,7 @@ use crate::{
     completing,
     completing::{Completion, Listing},
     indenting::{self, Indent},
+    notes::{self, LineNote},
     place::{
         TextPoint, Word, byte_of_char, caret_at, chars_before, text_point, word_around, word_at,
         word_before, word_still_at,
@@ -68,6 +69,10 @@ pub struct EditorRequest<'a> {
     /// boundary. A stretch already underlined - the current mark, the word under a held
     /// modifier - keeps its own underline.
     pub underlines: &'a [Underline],
+    /// Notes about stretches of the lines, drawn in a column of their own left of the line
+    /// numbers - see [`LineNote`]. In order and not overlapping. Empty - the default - is no
+    /// column at all, and the fringe is the line numbers alone.
+    pub notes: &'a [LineNote],
 }
 
 /// A stretch of the text to underline, and in what colour.
@@ -121,6 +126,11 @@ pub struct EditorOutput {
     /// Where the caret is on screen, when the text area has one: what a caller hangs a popup
     /// about the place being typed at off - the signature of a call.
     pub caret_rect: Option<Rect>,
+    /// The note the pointer rests on, as an index into [`EditorRequest::notes`]: what a caller
+    /// hangs the whole of the note off, since the column only has room for a line of it.
+    pub pointed_note: Option<usize>,
+    /// The note that was clicked this frame, as the same index.
+    pub note_clicked: Option<usize>,
 }
 
 /// A text buffer and how it is drawn: a code editor, with a fringe of line numbers beside it.
@@ -346,6 +356,18 @@ impl Editor {
         request: &EditorRequest<'_>,
     ) -> EditorOutput {
         let row_height = ui.fonts_mut(|fonts| fonts.row_height(&style.font));
+        // How wide the column of notes is, if there is one: sized for the widest note in the
+        // font's own advance, which is exact because the font is monospace. It is measured
+        // off the notes rather than fixed so a file with short notes does not carry a wide
+        // empty column, and capped so one long note does not push the code off the page.
+        let note_chars = notes::column_chars(request.notes, style.note_max_chars);
+        let notes_width = match note_chars {
+            0 => 0.0,
+            chars => {
+                let advance = ui.fonts_mut(|fonts| fonts.glyph_width(&style.note_font, '0'));
+                chars as f32 * advance + 2.0 * notes::NOTE_PADDING
+            }
+        };
         // The text area's id, settled out here rather than left to egui to derive, because
         // where the caret was *before* the text area ran is what says where an edit happened
         // - and that can only be read back from the state under an id already known.
@@ -412,6 +434,8 @@ impl Editor {
         let mut pointed_word: Option<Word> = None;
         let mut pointed_at: Option<TextPoint> = None;
         let mut navigated_to: Option<Word> = None;
+        let mut pointed_note: Option<usize> = None;
+        let mut note_clicked: Option<usize> = None;
         // The text and the highlighter are borrowed apart: the `TextEdit` takes the buffer
         // mutably, and the layouter reads the tokens beside it in the same breath.
         let Self {
@@ -436,10 +460,19 @@ impl Editor {
                     // only an estimate for layout - the numbers are painted where the laid-out
                     // text really put each line.
                     let fringe_height = row_height * line_count as f32;
+                    // The column of notes, when there is one, sits left of the numbers and
+                    // widens the fringe by exactly itself.
                     let (fringe, _) = ui.allocate_exact_size(
-                        vec2(style.fringe_width, fringe_height),
+                        vec2(style.fringe_width + notes_width, fringe_height),
                         egui::Sense::hover(),
                     );
+                    let notes_column = Rect::from_min_max(
+                        fringe.min,
+                        pos2(fringe.min.x + notes_width, fringe.max.y),
+                    );
+                    // Where each note on screen was drawn, stretched over its rows as they
+                    // come by, for the pointer to be read against once the rows are painted.
+                    let mut note_rects: Vec<(usize, Rect)> = Vec::new();
                     // The fringe's painter, kept from out here: the one inside the horizontal
                     // scroll area clips to the code, and the numbers sit left of it.
                     let painter = ui.painter().clone();
@@ -624,6 +657,56 @@ impl Editor {
                                         style.new_line_ink.gamma_multiply(opacity),
                                     );
                                 }
+                                // The note this line falls in, if any. Every row of the line
+                                // is the note's for the pointer, and the note is written on
+                                // the first two rows of its stretch: the title at the top,
+                                // where the rule across the column says a new stretch begins,
+                                // and the detail on the row under it.
+                                if notes_width > 0.0
+                                    && let Some(index) =
+                                        notes::note_at(request.notes, line.number - 1)
+                                {
+                                    let row = Rect::from_min_max(
+                                        pos2(notes_column.min.x, y),
+                                        pos2(notes_column.max.x, y + placed.rect().height()),
+                                    );
+                                    match note_rects.last_mut() {
+                                        Some((last, rect)) if *last == index => {
+                                            *rect = rect.union(row);
+                                        }
+                                        _ => note_rects.push((index, row)),
+                                    }
+                                    if line.starts {
+                                        let note = &request.notes[index];
+                                        let at = pos2(notes_column.min.x + notes::NOTE_PADDING, y);
+                                        match line.number - 1 - note.lines.start {
+                                            0 => {
+                                                painter.hline(
+                                                    notes_column.x_range(),
+                                                    y,
+                                                    egui::Stroke::new(1.0, style.note_rule_ink),
+                                                );
+                                                painter.text(
+                                                    at,
+                                                    egui::Align2::LEFT_TOP,
+                                                    notes::fitted(&note.title, note_chars),
+                                                    style.note_font.clone(),
+                                                    note.ink.unwrap_or(style.note_ink),
+                                                );
+                                            }
+                                            1 => {
+                                                painter.text(
+                                                    at,
+                                                    egui::Align2::LEFT_TOP,
+                                                    notes::fitted(&note.detail, note_chars),
+                                                    style.note_font.clone(),
+                                                    style.note_detail_ink,
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
                                 if !line.starts {
                                     continue;
                                 }
@@ -683,6 +766,23 @@ impl Editor {
                     // from inside it, would never be scrolled to.
                     if let Some(rect) = line_at.or(current_mark_at) {
                         ui.scroll_to_rect(rect, Some(Align::Center));
+                    }
+
+                    // The pointer against the notes on screen, from out here where the ui
+                    // is the one the fringe was allocated in: the one inside the sideways
+                    // scroll clips to the code, and would never see a pointer on the column.
+                    for (index, rect) in note_rects {
+                        let response = ui.interact(
+                            rect,
+                            ui.id().with(("moon-editor-note", index)),
+                            egui::Sense::click(),
+                        );
+                        if response.hovered() {
+                            pointed_note = Some(index);
+                        }
+                        if response.clicked() {
+                            note_clicked = Some(index);
+                        }
                     }
                 });
             });
@@ -770,6 +870,8 @@ impl Editor {
             pointed_at,
             pointed_word,
             caret_rect,
+            pointed_note,
+            note_clicked,
         }
     }
 }
