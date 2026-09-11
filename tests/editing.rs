@@ -83,7 +83,10 @@ fn a_line_typed_in_is_marked_new() {
     let committed = "fn one() {}".to_string();
     let mut editor = Editor::new(committed.clone());
     editor.set_base(Some(committed));
-    assert!(editor.new_lines().is_empty(), "the text as committed has nothing new");
+    assert!(
+        editor.new_lines().is_empty(),
+        "the text as committed has nothing new"
+    );
     let mut harness = Harness::builder()
         .with_size(egui::vec2(600.0, 200.0))
         .build_ui(move |ui| {
@@ -95,7 +98,9 @@ fn a_line_typed_in_is_marked_new() {
 
     harness.run_steps(4);
     harness.key_press(egui::Key::End);
-    harness.get_by_role(Role::MultilineTextInput).type_text("\nfn two() {}");
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text("\nfn two() {}");
     // A second on, a step being a quarter of one: still waiting for the typing to stop.
     harness.run_steps(4);
     assert!(new_lines.lock().unwrap().is_empty(), "marked while typing");
@@ -383,5 +388,107 @@ fn a_search_over_highlighted_code_still_marks_every_match() {
             .filter(|(_, format)| format.background != egui::Color32::TRANSPARENT)
             .count()
             == 10
+    );
+}
+
+/// Text replaced from outside the text area - a rename across a project - leaves the caret
+/// where it was in the text around it, so what is typed next goes where it would have gone.
+#[test]
+fn text_replaced_from_outside_carries_the_caret_with_it() {
+    use std::sync::{Arc, Mutex};
+
+    let text = Arc::new(Mutex::new(String::new()));
+    let out = Arc::clone(&text);
+    let pending: Arc<Mutex<Option<Vec<(std::ops::Range<usize>, String)>>>> =
+        Arc::new(Mutex::new(None));
+    let to_apply = Arc::clone(&pending);
+
+    let mut editor = Editor::new("one two".to_string());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 200.0))
+        .build_ui(move |ui| {
+            if let Some(edits) = to_apply.lock().unwrap().take() {
+                editor.replace_ranges(edits);
+            }
+            let style = EditorStyle::from_visuals(ui.visuals());
+            let output = editor.ui(ui, &style, &EditorRequest::default());
+            output.response.request_focus();
+            *out.lock().unwrap() = editor.text().to_string();
+        });
+
+    harness.run_steps(4);
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::End,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(2);
+
+    // The word before the caret gets longer, and the caret has to move along with it.
+    *pending.lock().unwrap() = Some(vec![(0..3, "three".to_string())]);
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("!".to_string()));
+    harness.run_steps(2);
+
+    assert_eq!(*text.lock().unwrap(), "three two!");
+}
+
+/// A right-click puts the caret where it was made, the way a left one does: a menu opened on
+/// a word is about that word, and the caret is what a caller asks about.
+#[test]
+fn a_right_click_puts_the_caret_where_it_was_made() {
+    use std::sync::{Arc, Mutex};
+
+    let caret = Arc::new(Mutex::new(None));
+    let out = Arc::clone(&caret);
+
+    let mut editor = Editor::new("one two\nthree four\n".to_string());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 200.0))
+        .build_ui(move |ui| {
+            let style = EditorStyle::from_visuals(ui.visuals());
+            let output = editor.ui(ui, &style, &EditorRequest::default());
+            *out.lock().unwrap() = output.caret;
+        });
+    harness.run_steps(4);
+    assert_eq!(*caret.lock().unwrap(), None, "nothing has been clicked yet");
+
+    // Into the first line, a few characters in - the text area runs as wide as the scroll area
+    // lets it, so its far edge is under the scroll bar rather than over the text. A frame for
+    // each part of the click, the way a hand makes one: the pointer arrives, the button goes
+    // down, and comes back up.
+    let rect = harness.get_by_role(Role::MultilineTextInput).rect();
+    let at = rect.min + egui::vec2(40.0, 10.0);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(at));
+    harness.step();
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+    }
+    harness.run_steps(2);
+
+    let caret = caret
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the right-click put a caret in");
+    assert_eq!(caret.line, 0, "the caret goes on the line that was clicked");
+    assert!(
+        (1..=7).contains(&caret.column),
+        "the caret goes where in the line the click was, saw column {}",
+        caret.column
     );
 }

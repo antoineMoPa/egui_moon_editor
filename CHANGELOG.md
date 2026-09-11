@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- `EditorOutput::caret_rect`: where the caret is on screen, for a popup hung off it.
+
+- `EditorRequest::underlines` underlines stretches of the text in the caller's colours - what a
+  language server found wrong - and `EditorOutput::pointed_at` and `pointed_word` say what the
+  pointer is over without a modifier held, for a tooltip about it.
+
+- `EditorOutput::word_at_caret`: the word the caret sits in, for a caller asking about a name
+  from the keyboard or a menu the way `navigated_to` is from a click.
+
+- `Editor::replace_ranges` puts edits made outside the text area into the text - a rename
+  across a project - and carries the caret and the selection through them, so what is typed
+  next goes where it would have gone. `set_text` stays the way to load a different text.
+
+- A right-click puts the caret where it was made, unless it was made inside the selection, so
+  a context menu opened on a name is about that name.
+
 - Rhai is highlighted. syntect bundles no Rhai grammar and the ones rhaiscript publishes are
   MPL-2.0 tmLanguage files, so `grammars/Rhai.sublime-syntax` is written for this crate, under
   its licence, in the scope names the theme already reads. The code inside a backtick string's

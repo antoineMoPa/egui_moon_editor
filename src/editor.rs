@@ -8,8 +8,8 @@ use crate::{
     completing::{Completion, Listing},
     indenting::{self, Indent},
     place::{
-        TextPoint, Word, caret_at, chars_before, text_point, word_around, word_at, word_before,
-        word_still_at,
+        TextPoint, Word, byte_of_char, caret_at, chars_before, text_point, word_around, word_at,
+        word_before, word_still_at,
     },
     style::EditorStyle,
     syntax::{Highlighter, Language, TokenStyle},
@@ -62,6 +62,21 @@ pub struct EditorRequest<'a> {
     /// file is indented is a fact about the repo it is in and the caller is what knows the
     /// repo — see [`Indent`].
     pub indent: Indent,
+    /// Stretches of the text to underline in a colour of the caller's - what a language server
+    /// found wrong, say. One that no longer fits the text, typed into since the ranges were
+    /// worked out, is left out for the frame rather than cut where there is no character
+    /// boundary. A stretch already underlined - the current mark, the word under a held
+    /// modifier - keeps its own underline.
+    pub underlines: &'a [Underline],
+}
+
+/// A stretch of the text to underline, and in what colour.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Underline {
+    /// Bytes of the text as it stands.
+    pub range: Range<usize>,
+    /// The colour of the line under it.
+    pub color: egui::Color32,
 }
 
 /// What drawing the editor turned up.
@@ -93,6 +108,19 @@ pub struct EditorOutput {
     /// The word being typed at the caret, when there is one: what the caller works out its
     /// candidates from. `None` when the caret is not at the end of a word.
     pub word_being_typed: Option<Word>,
+    /// The word the caret sits in, when it sits in one: what a caller asks about a name from
+    /// the keyboard or a menu, the way [`navigated_to`](Self::navigated_to) is from a click.
+    pub word_at_caret: Option<Word>,
+    /// Where in the text the pointer is, while it is over the text: what a caller showing
+    /// something about the place under the pointer - a diagnostic's message - reads.
+    pub pointed_at: Option<TextPoint>,
+    /// The word under the pointer, while there is one: what a caller showing something about
+    /// the name under the pointer - its type, its docs - asks about. The word
+    /// [`navigable_word`](Self::navigable_word) is, without a modifier held.
+    pub pointed_word: Option<Word>,
+    /// Where the caret is on screen, when the text area has one: what a caller hangs a popup
+    /// about the place being typed at off - the signature of a call.
+    pub caret_rect: Option<Rect>,
 }
 
 /// A text buffer and how it is drawn: a code editor, with a fringe of line numbers beside it.
@@ -130,6 +158,46 @@ pub struct Editor {
     /// The lines of the text that the text it is compared against does not have, drawn as a
     /// bar down the right of the fringe - and when to look again after the text is typed into.
     new_lines: NewLines,
+    /// Edits put into the text from outside since the text area last ran - see
+    /// [`replace_ranges`](Self::replace_ranges). The caret the text area is holding is a place
+    /// in the text as it was before them, and it is carried through them the next time the
+    /// editor is drawn, which is the first moment the text area's state can be reached.
+    outside_edits: Vec<OutsideEdit>,
+}
+
+/// A stretch of the text replaced from outside, counted in characters of the text as it was
+/// before - the unit egui's cursor counts in, and the text its cursor was a place in.
+struct CharEdit {
+    start: usize,
+    end: usize,
+    /// How many characters were put in its place.
+    inserted: usize,
+}
+
+/// One call's worth of outside edits, waiting for the frame that carries the caret through them.
+struct OutsideEdit {
+    edits: Vec<CharEdit>,
+    /// The first line they touched, which is where the fringe's bars start moving.
+    from_line: usize,
+}
+
+/// Where a place in the text lands once the edits have gone in. A place before an edit stays
+/// where it is, one after it moves by what the edit added or took away, and one inside the
+/// text an edit replaced ends up at the end of what replaced it - a caret in the middle of a
+/// name that was renamed is left at the end of the new one.
+fn carried_through(edits: &[CharEdit], place: usize) -> usize {
+    let mut moved_by: isize = 0;
+    for edit in edits {
+        if edit.end <= place {
+            moved_by += edit.inserted as isize - (edit.end - edit.start) as isize;
+            continue;
+        }
+        if edit.start < place {
+            return (edit.start as isize + moved_by) as usize + edit.inserted;
+        }
+        break;
+    }
+    (place as isize + moved_by) as usize
 }
 
 impl Editor {
@@ -143,6 +211,87 @@ impl Editor {
             hovered_word: None,
             completing: Listing::default(),
             new_lines: NewLines::default(),
+            outside_edits: Vec::new(),
+        }
+    }
+
+    /// Replace stretches of the text with other text, the way a rename across a project does:
+    /// the rest of the buffer, and the caret and selection in it, stay where they were.
+    ///
+    /// [`set_text`](Self::set_text) is the other way to change the text from outside, and it
+    /// is for a different text altogether - a file loaded in place of another. This is the
+    /// same text with some of it changed, so the caret is carried through the change rather
+    /// than left at a character count that now means somewhere else, and the text area's own
+    /// undo takes the change back like any other.
+    ///
+    /// `edits` are byte ranges of the text as it stands, in order and never overlapping. That
+    /// is the caller's contract, and a list that breaks it panics rather than being put in some
+    /// order that would land an edit where it was not meant.
+    pub fn replace_ranges(&mut self, edits: Vec<(Range<usize>, String)>) {
+        let Some((first, _)) = edits.first() else {
+            return;
+        };
+        assert!(
+            edits
+                .windows(2)
+                .all(|pair| pair[0].0.end <= pair[1].0.start),
+            "the edits have to be in order and not overlap"
+        );
+        let from_line = self.text[..first.start].matches('\n').count();
+
+        // In characters, counted forwards once rather than from the start of the text for each
+        // edit: a rename in a long file is many edits, and they are all in order.
+        let mut moves = Vec::with_capacity(edits.len());
+        let mut chars = 0;
+        let mut counted_to = 0;
+        for (range, with) in &edits {
+            chars += self.text[counted_to..range.start].chars().count();
+            let start = chars;
+            chars += self.text[range.clone()].chars().count();
+            counted_to = range.end;
+            moves.push(CharEdit {
+                start,
+                end: chars,
+                inserted: with.chars().count(),
+            });
+        }
+        for (range, with) in edits.into_iter().rev() {
+            self.text.replace_range(range, &with);
+        }
+
+        self.highlighter.invalidate_from(from_line);
+        // The word the pointer was over and the list that was up are both of the text before.
+        self.hovered_word = None;
+        self.completing.dismiss();
+        self.outside_edits.push(OutsideEdit {
+            edits: moves,
+            from_line,
+        });
+    }
+
+    /// Carry the text area's caret through whatever was put into the text from outside since it
+    /// last ran, and move the fringe's bars with their lines.
+    fn carry_the_caret_through_outside_edits(&mut self, ui: &Ui, text_id: egui::Id) {
+        for outside in std::mem::take(&mut self.outside_edits) {
+            // A text area that has never been drawn has no caret to carry.
+            if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), text_id)
+                && let Some(mut range) = state.cursor.char_range()
+            {
+                range.primary = egui::text::CCursor::new(carried_through(
+                    &outside.edits,
+                    range.primary.index.0,
+                ));
+                range.secondary = egui::text::CCursor::new(carried_through(
+                    &outside.edits,
+                    range.secondary.index.0,
+                ));
+                state.cursor.set_char_range(Some(range));
+                state.store(ui.ctx(), text_id);
+            }
+            let caret = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
+            let now = ui.input(|input| input.time);
+            self.new_lines
+                .edited(&self.text, outside.from_line, caret, now);
         }
     }
 
@@ -201,6 +350,9 @@ impl Editor {
         // where the caret was *before* the text area ran is what says where an edit happened
         // - and that can only be read back from the state under an id already known.
         let text_id = ui.id().with("moon-editor-text");
+        // Before anything reads the caret: it is still a place in the text as it was before
+        // whatever was put in from outside.
+        self.carry_the_caret_through_outside_edits(ui, text_id);
         // The list of things to finish the word being typed with, settled before anything is
         // drawn: whether it is on screen is what says who gets the arrows, Enter, Tab and
         // Escape this frame, and the text area reads those the moment it runs.
@@ -256,6 +408,9 @@ impl Editor {
         let mut line_at: Option<Rect> = None;
         let mut response = None;
         let mut navigable_word: Option<Word> = None;
+        let mut caret_rect: Option<Rect> = None;
+        let mut pointed_word: Option<Word> = None;
+        let mut pointed_at: Option<TextPoint> = None;
         let mut navigated_to: Option<Word> = None;
         // The text and the highlighter are borrowed apart: the `TextEdit` takes the buffer
         // mutably, and the layouter reads the tokens beside it in the same breath.
@@ -316,6 +471,7 @@ impl Editor {
                                     &byte_marks,
                                     request.marks.current,
                                     underline.clone(),
+                                    request.underlines,
                                     highlighter,
                                     style,
                                     wrap,
@@ -345,6 +501,30 @@ impl Editor {
                             if request.focus {
                                 output.response.request_focus();
                             }
+                            // A right-click puts the caret where it was made, the way a left
+                            // one does: a menu opened on a name is about that name, and what a
+                            // caller asks about is the place the caret is at. Not inside a
+                            // selection, which is what a menu opened over it is about.
+                            if output.response.secondary_clicked()
+                                && let Some(pointer) =
+                                    ui.input(|input| input.pointer.interact_pos())
+                            {
+                                let clicked =
+                                    output.galley.cursor_from_pos(pointer - output.galley_pos);
+                                let in_the_selection = output.cursor_range.is_some_and(|range| {
+                                    let [min, max] = range.sorted_cursors();
+                                    min.index < max.index
+                                        && (min.index..=max.index).contains(&clicked.index)
+                                });
+                                if !in_the_selection {
+                                    let mut state = output.state.clone();
+                                    state.cursor.set_char_range(Some(
+                                        egui::text::CCursorRange::one(clicked),
+                                    ));
+                                    state.store(ui.ctx(), text_id);
+                                    output.response.request_focus();
+                                }
+                            }
                             // An edit moves the bars below it with their lines; the comparison
                             // itself waits for the typing to stop, and is told where the caret
                             // was left, which is where the typing was. The edit starts at the
@@ -372,17 +552,25 @@ impl Editor {
                             // underline lags. `contains_pointer` rather than `hovered`: the
                             // answer is about where the pointer is, not about whether the
                             // text area is the widget entitled to react to it.
-                            if navigating && output.response.contains_pointer() {
-                                navigable_word = ui
-                                    .input(|input| input.pointer.interact_pos())
-                                    .and_then(|pointer| {
-                                        word_at(
-                                            text.as_str(),
-                                            &output.galley,
-                                            output.galley_pos,
-                                            pointer,
-                                        )
-                                    });
+                            if output.response.contains_pointer()
+                                && let Some(pointer) =
+                                    ui.input(|input| input.pointer.interact_pos())
+                            {
+                                pointed_word = word_at(
+                                    text.as_str(),
+                                    &output.galley,
+                                    output.galley_pos,
+                                    pointer,
+                                );
+                                let under =
+                                    output.galley.cursor_from_pos(pointer - output.galley_pos);
+                                pointed_at = Some(text_point(
+                                    text.as_str(),
+                                    byte_of_char(text.as_str(), under.index.0),
+                                ));
+                            }
+                            if navigating {
+                                navigable_word = pointed_word.clone();
                             }
                             if let Some(word) = &navigable_word {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -448,6 +636,20 @@ impl Editor {
                                 );
                             }
 
+                            // Where the caret is on screen, for a caller hanging something off
+                            // it - the signature of the call being typed.
+                            if let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str()) {
+                                let at = egui::text::CCursor::new(chars_before(
+                                    text.as_str(),
+                                    caret.offset,
+                                ));
+                                caret_rect = Some(
+                                    output
+                                        .galley
+                                        .pos_from_cursor(at)
+                                        .translate(output.galley_pos.to_vec2()),
+                                );
+                            }
                             // Hung off the caret in the text as it was just laid out, which is
                             // the only place the caret's rect can be measured from.
                             if drawing_list
@@ -526,7 +728,10 @@ impl Editor {
         // Left behind for the next frame, after the text area has set a filter of its own:
         // while there is a list on screen, Escape and Tab are the list's, and egui works out
         // whose they are before any of this runs.
-        if self.completing.showing(request.completions, response.has_focus()) {
+        if self
+            .completing
+            .showing(request.completions, response.has_focus())
+        {
             ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(text_id, completing::LIST_KEEPS_KEYS);
             });
@@ -537,6 +742,13 @@ impl Editor {
         let word_being_typed = caret
             .as_ref()
             .and_then(|point| word_before(&self.text, point.offset));
+        let word_at_caret = caret.as_ref().and_then(|point| {
+            let range = word_around(&self.text, point.offset)?;
+            Some(Word {
+                text: self.text[range.clone()].to_string(),
+                at: text_point(&self.text, range.start),
+            })
+        });
 
         EditorOutput {
             // The text area is drawn on every path through the closure above, so there is
@@ -554,6 +766,10 @@ impl Editor {
             completion_taken,
             completion_dismissed: presses.dismissed,
             word_being_typed,
+            word_at_caret,
+            pointed_at,
+            pointed_word,
+            caret_rect,
         }
     }
 }
@@ -686,6 +902,7 @@ fn marked_text(
     marks: &[Range<usize>],
     current: usize,
     navigable: Option<Range<usize>>,
+    underlines: &[Underline],
     highlighter: &Highlighter,
     style: &EditorStyle,
     wrap_width: f32,
@@ -695,7 +912,7 @@ fn marked_text(
 
     let runs = token_runs(text, highlighter);
     let mut at = 0;
-    for (span, look) in marked_spans(text, marks, current, navigable, style) {
+    for (span, look) in marked_spans(text, marks, current, navigable, underlines, style) {
         append_runs(&mut job, text, &runs, &mut at, span, style, look);
     }
     job
@@ -711,6 +928,7 @@ fn marked_spans(
     marks: &[Range<usize>],
     current: usize,
     navigable: Option<Range<usize>>,
+    underlines: &[Underline],
     style: &EditorStyle,
 ) -> Vec<(Range<usize>, MarkLook)> {
     let mut spans = Vec::new();
@@ -735,18 +953,54 @@ fn marked_spans(
     // The word was found in the text as it was at the top of the frame, and a `TextEdit` lays
     // its text out again after applying what was typed into it - so by here the word can be
     // over an offset that is no longer a character boundary, and cutting the text there would
-    // panic. A frame with no underline on it is the right answer to that.
-    let Some(word) = navigable.filter(|word| {
-        word.end <= text.len()
-            && text.is_char_boundary(word.start)
-            && text.is_char_boundary(word.end)
-    }) else {
-        return spans;
-    };
+    // panic. A frame with no underline on it is the right answer to that. The caller's
+    // underlines are the same: worked out against the text as it was.
+    if let Some(word) = navigable.filter(|word| fits(text, word)) {
+        spans = spans
+            .into_iter()
+            .flat_map(|(span, look)| underlined_word(span, look, &word, style))
+            .collect();
+    }
+    for underline in underlines
+        .iter()
+        .filter(|underline| fits(text, &underline.range))
+    {
+        spans = spans
+            .into_iter()
+            .flat_map(|(span, look)| underlined_in_colour(span, look, underline))
+            .collect();
+    }
     spans
-        .into_iter()
-        .flat_map(|(span, look)| underlined_word(span, look, &word, style))
-        .collect()
+}
+
+/// Whether a range can be cut out of the text as it stands.
+fn fits(text: &str, range: &Range<usize>) -> bool {
+    range.start <= range.end
+        && range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+}
+
+/// One span cut where a caller's underline starts and ends, with the piece inside it underlined
+/// in the caller's colour - unless the span is underlined already, which keeps what it has.
+fn underlined_in_colour(
+    span: Range<usize>,
+    look: MarkLook,
+    underline: &Underline,
+) -> Vec<(Range<usize>, MarkLook)> {
+    let inside = span.start.max(underline.range.start)..span.end.min(underline.range.end);
+    if inside.is_empty() || look.underline != egui::Stroke::NONE {
+        return vec![(span, look)];
+    }
+    let underlined = MarkLook {
+        underline: egui::Stroke::new(1.5, underline.color),
+        ..look
+    };
+    vec![
+        (span.start..inside.start, look),
+        (inside.clone(), underlined),
+        (inside.end..span.end, look),
+    ]
 }
 
 /// One span cut where the word under the pointer starts and ends, with the piece inside it
