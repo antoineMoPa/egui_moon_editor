@@ -7,7 +7,7 @@ use crate::{
     completing,
     completing::{Completion, Listing},
     indenting::{self, Indent},
-    notes::{self, LineNote},
+    notes::{self, LineNote, NoteClick, PointedNote},
     place::{
         TextPoint, Word, byte_of_char, caret_at, chars_before, text_point, word_around, word_at,
         word_before, word_still_at,
@@ -126,11 +126,12 @@ pub struct EditorOutput {
     /// Where the caret is on screen, when the text area has one: what a caller hangs a popup
     /// about the place being typed at off - the signature of a call.
     pub caret_rect: Option<Rect>,
-    /// The note the pointer rests on, as an index into [`EditorRequest::notes`]: what a caller
-    /// hangs the whole of the note off, since the column only has room for a line of it.
-    pub pointed_note: Option<usize>,
-    /// The note that was clicked this frame, as the same index.
-    pub note_clicked: Option<usize>,
+    /// The note the pointer rests on, and the response of its stretch: what a caller hangs the
+    /// whole of the note off, since the column only has room for a line of it - see
+    /// [`PointedNote`].
+    pub pointed_note: Option<PointedNote>,
+    /// The note that was clicked this frame, and where in it - see [`NoteClick`].
+    pub note_clicked: Option<NoteClick>,
 }
 
 /// A text buffer and how it is drawn: a code editor, with a fringe of line numbers beside it.
@@ -361,12 +362,13 @@ impl Editor {
         // off the notes rather than fixed so a file with short notes does not carry a wide
         // empty column, and capped so one long note does not push the code off the page.
         let note_chars = notes::column_chars(request.notes, style.note_max_chars);
+        let note_advance = match note_chars {
+            0 => 0.0,
+            _ => ui.fonts_mut(|fonts| fonts.glyph_width(&style.note_font, '0')),
+        };
         let notes_width = match note_chars {
             0 => 0.0,
-            chars => {
-                let advance = ui.fonts_mut(|fonts| fonts.glyph_width(&style.note_font, '0'));
-                chars as f32 * advance + 2.0 * notes::NOTE_PADDING
-            }
+            chars => chars as f32 * note_advance + 2.0 * notes::NOTE_PADDING,
         };
         // The text area's id, settled out here rather than left to egui to derive, because
         // where the caret was *before* the text area ran is what says where an edit happened
@@ -434,8 +436,8 @@ impl Editor {
         let mut pointed_word: Option<Word> = None;
         let mut pointed_at: Option<TextPoint> = None;
         let mut navigated_to: Option<Word> = None;
-        let mut pointed_note: Option<usize> = None;
-        let mut note_clicked: Option<usize> = None;
+        let mut pointed_note: Option<PointedNote> = None;
+        let mut note_clicked: Option<NoteClick> = None;
         // The text and the highlighter are borrowed apart: the `TextEdit` takes the buffer
         // mutably, and the layouter reads the tokens beside it in the same breath.
         let Self {
@@ -471,8 +473,12 @@ impl Editor {
                         pos2(fringe.min.x + notes_width, fringe.max.y),
                     );
                     // Where each note on screen was drawn, stretched over its rows as they
-                    // come by, for the pointer to be read against once the rows are painted.
-                    let mut note_rects: Vec<(usize, Rect)> = Vec::new();
+                    // come by, and which row of its stretch the first of those is, for the
+                    // pointer to be read against once the rows are painted.
+                    let mut note_rects: Vec<(usize, Rect, usize)> = Vec::new();
+                    // Where the pointer is, for the link of a note to light up under it as
+                    // the note is painted - before the note's response exists to ask.
+                    let pointer = ui.ctx().pointer_hover_pos();
                     // The fringe's painter, kept from out here: the one inside the horizontal
                     // scroll area clips to the code, and the numbers sit left of it.
                     let painter = ui.painter().clone();
@@ -670,11 +676,13 @@ impl Editor {
                                         pos2(notes_column.min.x, y),
                                         pos2(notes_column.max.x, y + placed.rect().height()),
                                     );
+                                    let row_in_note =
+                                        line.number - 1 - request.notes[index].lines.start;
                                     match note_rects.last_mut() {
-                                        Some((last, rect)) if *last == index => {
+                                        Some((last, rect, _)) if *last == index => {
                                             *rect = rect.union(row);
                                         }
-                                        _ => note_rects.push((index, row)),
+                                        _ => note_rects.push((index, row, row_in_note)),
                                     }
                                     if line.starts {
                                         let note = &request.notes[index];
@@ -686,12 +694,25 @@ impl Editor {
                                                     y,
                                                     egui::Stroke::new(1.0, style.note_rule_ink),
                                                 );
-                                                painter.text(
+                                                let title = notes::fitted(&note.title, note_chars);
+                                                // The link lit up while the pointer is on it.
+                                                let lit = note.link.clone().filter(|link| {
+                                                    let on_it = notes::link_rect(
+                                                        at,
+                                                        link,
+                                                        note_advance,
+                                                        placed.rect().height(),
+                                                    );
+                                                    pointer.is_some_and(|at| on_it.contains(at))
+                                                });
+                                                notes::paint_title(
+                                                    &painter,
                                                     at,
-                                                    egui::Align2::LEFT_TOP,
-                                                    notes::fitted(&note.title, note_chars),
-                                                    style.note_font.clone(),
+                                                    &title,
                                                     note.ink.unwrap_or(style.note_ink),
+                                                    lit,
+                                                    style,
+                                                    note_advance,
                                                 );
                                             }
                                             1 => {
@@ -771,17 +792,42 @@ impl Editor {
                     // The pointer against the notes on screen, from out here where the ui
                     // is the one the fringe was allocated in: the one inside the sideways
                     // scroll clips to the code, and would never see a pointer on the column.
-                    for (index, rect) in note_rects {
+                    for (index, rect, first_row) in note_rects {
                         let response = ui.interact(
                             rect,
                             ui.id().with(("moon-editor-note", index)),
                             egui::Sense::click(),
                         );
                         if response.hovered() {
-                            pointed_note = Some(index);
+                            pointed_note = Some(PointedNote {
+                                note: index,
+                                response: response.clone(),
+                            });
+                            // The pointing hand over the link, the way a browser shows one.
+                            if let Some(at) = pointer {
+                                let (row, column) = notes::place_within(
+                                    first_row,
+                                    rect,
+                                    at,
+                                    row_height,
+                                    note_advance,
+                                );
+                                if notes::on_the_link(&request.notes[index], row, column) {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                            }
                         }
-                        if response.clicked() {
-                            note_clicked = Some(index);
+                        if response.clicked()
+                            && let Some(at) = response.interact_pointer_pos()
+                        {
+                            note_clicked = Some(notes::click_within(
+                                index,
+                                first_row,
+                                rect,
+                                at,
+                                row_height,
+                                note_advance,
+                            ));
                         }
                     }
                 });

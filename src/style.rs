@@ -155,6 +155,9 @@ pub struct EditorStyle {
     pub note_detail_ink: Color32,
     /// The rule across the column where one note's stretch ends and the next begins.
     pub note_rule_ink: Color32,
+    /// The ink a note's link is drawn in while the pointer is on it - see
+    /// [`LineNote::link`](crate::LineNote::link).
+    pub note_link_ink: Color32,
     /// How wide the column of notes may grow, in characters. A note longer than that is cut
     /// with an ellipsis, so one long note does not push the code off the page.
     pub note_max_chars: usize,
@@ -260,6 +263,7 @@ impl EditorStyle {
             note_ink: ink,
             note_detail_ink: muted,
             note_rule_ink: visuals.widgets.noninteractive.bg_stroke.color,
+            note_link_ink: visuals.hyperlink_color,
             note_max_chars: DEFAULT_NOTE_MAX_CHARS,
             syntax: SyntaxTheme::from_fn(|style| TokenLook {
                 ink: default_ink(style, visuals.dark_mode, ink, muted),
