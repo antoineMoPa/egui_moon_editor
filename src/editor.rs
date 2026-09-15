@@ -174,6 +174,10 @@ pub struct Editor {
     /// in the text as it was before them, and it is carried through them the next time the
     /// editor is drawn, which is the first moment the text area's state can be reached.
     outside_edits: Vec<OutsideEdit>,
+    /// Where the caret is to be put the next time the editor is drawn, in bytes of the text
+    /// as it stands - see [`place_caret`](Self::place_caret). Held until then for the same
+    /// reason the outside edits are: the text area's state is only reachable from a frame.
+    pending_caret: Option<usize>,
 }
 
 /// A stretch of the text replaced from outside, counted in characters of the text as it was
@@ -223,7 +227,40 @@ impl Editor {
             completing: Listing::default(),
             new_lines: NewLines::default(),
             outside_edits: Vec::new(),
+            pending_caret: None,
         }
+    }
+
+    /// Put the caret at a byte of the text, and give the text area the keyboard, the next
+    /// time the editor is drawn - after [`replace_ranges`](Self::replace_ranges) has put in
+    /// the text the caret is meant to land in, say. `byte` is a place in the text as it stands
+    /// now, and one past its end is the end of it; anything further is a caller's mistake and
+    /// panics rather than being clamped to somewhere it did not ask for.
+    pub fn place_caret(&mut self, byte: usize) {
+        assert!(
+            byte <= self.text.len() && self.text.is_char_boundary(byte),
+            "a caret placed at byte {byte} of a text {} bytes long is nowhere",
+            self.text.len()
+        );
+        self.pending_caret = Some(byte);
+    }
+
+    /// Where the caret was asked to go and has not been put yet, for a test of the asking.
+    pub fn caret_waiting_to_be_placed(&self) -> Option<usize> {
+        self.pending_caret
+    }
+
+    fn put_the_caret_where_it_was_placed(&mut self, ui: &Ui, text_id: egui::Id) {
+        let Some(byte) = self.pending_caret.take() else {
+            return;
+        };
+        let at = egui::text::CCursor::new(chars_before(&self.text, byte));
+        let mut state = egui::text_edit::TextEditState::load(ui.ctx(), text_id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(at)));
+        state.store(ui.ctx(), text_id);
+        ui.memory_mut(|memory| memory.request_focus(text_id));
     }
 
     /// Replace stretches of the text with other text, the way a rename across a project does:
@@ -377,6 +414,8 @@ impl Editor {
         // Before anything reads the caret: it is still a place in the text as it was before
         // whatever was put in from outside.
         self.carry_the_caret_through_outside_edits(ui, text_id);
+        // And only then the caret a caller placed, which is a place in the text as it is now.
+        self.put_the_caret_where_it_was_placed(ui, text_id);
         // The list of things to finish the word being typed with, settled before anything is
         // drawn: whether it is on screen is what says who gets the arrows, Enter, Tab and
         // Escape this frame, and the text area reads those the moment it runs.
@@ -1282,5 +1321,31 @@ fn code_format(style: &EditorStyle, token: TokenStyle) -> egui::TextFormat {
         color: look.ink,
         italics: look.italics,
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A caret placed from outside waits for a frame, and is a place in the text as it is
+    /// now - so it is asked for after the edit it is meant to land in.
+    #[test]
+    fn a_placed_caret_waits_for_the_next_frame() {
+        let mut editor = Editor::new("one\n#now#\n".to_string());
+        assert_eq!(editor.caret_waiting_to_be_placed(), None);
+
+        editor.replace_ranges(vec![(4..4, "two\n".to_string())]);
+        editor.place_caret(8);
+
+        assert_eq!(editor.text(), "one\ntwo\n#now#\n");
+        assert_eq!(editor.caret_waiting_to_be_placed(), Some(8));
+    }
+
+    #[test]
+    #[should_panic(expected = "is nowhere")]
+    fn a_caret_placed_past_the_end_is_a_mistake() {
+        let mut editor = Editor::new("one".to_string());
+        editor.place_caret(4);
     }
 }
