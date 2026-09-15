@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `Editor::place_caret` puts the caret at a byte of the text on the next frame, and gives the
+  text area the keyboard - for a caller that has just put text in with `replace_ranges` and
+  wants the caret in it.
+
+- Org is highlighted: headings and the keyword on them, source blocks, directives, comments,
+  lists, links, verbatim runs and timestamps, from `grammars/Org.sublime-syntax`, written for
+  this crate. `markup.heading` and `markup.raw` gain rows in the scope table, so a Markdown
+  heading and code span read the same way.
+
 - `EditorOutput::caret_rect`: where the caret is on screen, for a popup hung off it.
 
 - `EditorRequest::underlines` underlines stretches of the text in the caller's colours - what a

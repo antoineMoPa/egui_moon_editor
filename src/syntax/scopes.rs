@@ -90,6 +90,11 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     ("meta.attribute", TokenStyle::Attribute),
     ("meta.annotation", TokenStyle::Attribute),
     ("meta.decorator", TokenStyle::Attribute),
+    // Prose with a shape: a heading is the one thing on the page a reader scans for, and a
+    // verbatim run is the one thing in it that is not prose. Markdown and Org both file
+    // them here.
+    ("markup.heading", TokenStyle::Keyword),
+    ("markup.raw", TokenStyle::StringLit),
 ];
 
 /// The look `scope` asks for, or nothing when the table has no row that fits.

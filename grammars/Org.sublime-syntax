@@ -1,0 +1,87 @@
+%YAML 1.2
+---
+# Org (https://orgmode.org), written for this crate rather than taken from anywhere, and under
+# the crate's own licence. The basics a journal or a notes file is made of - headings, the
+# keywords on them, lists, source blocks, comments, links, verbatim runs and timestamps - in
+# the scope names src/syntax/scopes.rs has rows for. Not the whole of org: tables, drawers,
+# properties and the rest read as plain text.
+# http://www.sublimetext.com/docs/3/syntax.html
+name: Org
+file_extensions:
+  - org
+scope: text.org
+
+contexts:
+  main:
+    - include: headings
+    - include: blocks
+    - include: directives
+    - include: comments
+    - include: lists
+    - include: inline
+
+  headings:
+    # `* `, `** ` and so on down: the stars and the whole line are the heading, and a TODO
+    # keyword right after the stars is picked out of it.
+    - match: '^(\*+)\s+'
+      captures:
+        1: punctuation.definition.heading.org
+      push:
+        - meta_scope: markup.heading.org
+        - match: '\b(TODO|NEXT|WAITING|STARTED)\b'
+          scope: keyword.other.todo.org
+        - match: '\b(DONE|CANCELLED|CANCELED)\b'
+          scope: constant.other.done.org
+        - match: '\[#[A-Z]\]'
+          scope: constant.other.priority.org
+        - include: inline
+        - match: '$\n?'
+          pop: true
+
+  blocks:
+    # `#+BEGIN_SRC` to `#+END_SRC`, and the other `#+BEGIN_…` blocks: the fence lines are
+    # directives and what is between them is raw.
+    - match: '^\s*(#\+)(?i:begin_src)\b.*$\n?'
+      scope: keyword.control.block.org
+      push:
+        - meta_content_scope: markup.raw.block.org
+        - match: '^\s*(#\+)(?i:end_src)\b.*$\n?'
+          scope: keyword.control.block.org
+          pop: true
+    - match: '^\s*(#\+)(?i:begin_)(\w+)\b.*$\n?'
+      scope: keyword.control.block.org
+      push:
+        - meta_content_scope: markup.raw.block.org
+        - match: '^\s*(#\+)(?i:end_)(\w+)\b.*$\n?'
+          scope: keyword.control.block.org
+          pop: true
+
+  directives:
+    # `#+TITLE:`, `#+NAME:` and the rest of the in-buffer settings.
+    - match: '^\s*(#\+)([A-Za-z_]+)(:)'
+      scope: keyword.other.directive.org
+
+  comments:
+    # A line starting `# ` is a comment in org. `#+` is a directive and `#now#` is not a
+    # comment, so the space after the `#` is required.
+    - match: '^\s*#\s.*$\n?'
+      scope: comment.line.number-sign.org
+
+  lists:
+    - match: '^\s*([-+*]|\d+[.)])\s+(\[[ X-]\]\s+)?'
+      captures:
+        1: keyword.operator.list.org
+        2: constant.other.checkbox.org
+
+  inline:
+    # `[[link]]` and `[[link][what it says]]`.
+    - match: '\[\[[^\]]*\](?:\[[^\]]*\])?\]'
+      scope: string.other.link.org
+    # `<2026-09-15 Tue 10:00>` and `[2026-09-15 Tue]`.
+    - match: '[<\[]\d{4}-\d{2}-\d{2}[^>\]\n]*[>\]]'
+      scope: constant.numeric.timestamp.org
+    # `=code=` and `~verbatim~`.
+    - match: '(?<![\w=])=(?=\S)[^=\n]*?(?<=\S)=(?![\w=])'
+      scope: markup.raw.inline.org
+    - match: '(?<![\w~])~(?=\S)[^~\n]*?(?<=\S)~(?![\w~])'
+      scope: markup.raw.inline.org

@@ -536,6 +536,56 @@ mod tests {
         assert!(styles.contains(&TokenStyle::Function), "{styles:?}");
     }
 
+    /// The runs a journal is read by: the heading line, the keyword on one, a source block's
+    /// contents, a comment, a link and a verbatim run. syntect bundles no Org grammar, so
+    /// before the vendored one every line of this was a single plain run.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn an_org_file_is_read_down_to_its_headings_blocks_and_links() {
+        let text = "\
+            * TODO Fix the login page\n\
+            # an aside\n\
+            #+BEGIN_SRC rust\n\
+            fn main() {}\n\
+            #+END_SRC\n\
+            - see [[https://orgmode.org][org]] and =this=\n\
+            plain words\n";
+        let lines = highlight(&Language::of_path("notes/work-log.org"), text);
+        let styles_of = |line: usize| -> Vec<TokenStyle> {
+            lines[line].iter().map(|token| token.style).collect()
+        };
+        // The heading is one keyword-coloured run, its TODO included.
+        assert!(
+            styles_of(0)
+                .iter()
+                .all(|style| *style == TokenStyle::Keyword),
+            "{:?}",
+            styles_of(0)
+        );
+        assert_eq!(lines[1][0].style, TokenStyle::Comment);
+        assert_eq!(lines[2][0].style, TokenStyle::Keyword, "the fence");
+        assert_eq!(
+            lines[3][0].style,
+            TokenStyle::StringLit,
+            "the block's contents are raw"
+        );
+        assert!(
+            styles_of(5).contains(&TokenStyle::Punctuation),
+            "the bullet: {:?}",
+            styles_of(5)
+        );
+        assert!(
+            styles_of(5).contains(&TokenStyle::StringLit),
+            "the link and the verbatim run: {:?}",
+            styles_of(5)
+        );
+        assert!(
+            styles_of(6).iter().all(|style| *style == TokenStyle::Plain),
+            "{:?}",
+            styles_of(6)
+        );
+    }
+
     #[cfg(feature = "syntax")]
     #[test]
     fn a_doc_comment_and_the_comment_below_it_are_told_apart_in_real_code() {
