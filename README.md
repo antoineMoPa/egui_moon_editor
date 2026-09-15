@@ -40,8 +40,8 @@ cargo run --example edit -- src/lib.rs
 
 ## License
 
-MIT, apart from the two TypeScript grammars under `grammars/`. The Rhai grammar beside them was
-written for this crate and is MIT like the rest of it.
+MIT, apart from the two TypeScript grammars under `grammars/`. The Rhai, Org and Typst grammars
+beside them were written for this crate and are MIT like the rest of it.
 
 syntect bundles no TypeScript grammar of any kind, so `.ts` and `.tsx` files are read with
 Microsoft's TypeScript grammars, vendored from

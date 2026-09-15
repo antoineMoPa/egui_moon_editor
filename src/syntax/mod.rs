@@ -252,7 +252,7 @@ mod backend {
 
     /// The grammars, read once from the dump `build.rs` wrote.
     ///
-    /// That dump is syntect's bundled grammars with the TypeScript and Rhai ones folded in;
+    /// That dump is syntect's bundled grammars with the ones in `grammars/` folded in;
     /// parsing the YAML those came from is a two-second job, which is why it happened at
     /// build time. Reading the dump is about a millisecond, the result is immutable, and it
     /// is paid for by whoever opens the first file and never again.
@@ -579,6 +579,62 @@ mod tests {
             "the link and the verbatim run: {:?}",
             styles_of(5)
         );
+        assert!(
+            styles_of(6).iter().all(|style| *style == TokenStyle::Plain),
+            "{:?}",
+            styles_of(6)
+        );
+    }
+
+    /// The three modes a `.typ` file is read in, line by line: a heading with its label, a
+    /// `#set` rule with a call, a named argument and a number with its unit, a `#let` whose
+    /// code spans lines, a list item that references the heading, math, a raw run and a line
+    /// of prose. syntect bundles no Typst grammar, so before the vendored one every line of
+    /// this was a single plain run.
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn a_typst_file_is_read_in_its_markup_code_and_math_modes() {
+        let text = "\
+            = Introduction <intro>\n\
+            #set text(size: 12pt) // the rule\n\
+            #let double(x) = {\n\
+            \x20 x * 2\n\
+            }\n\
+            - see @intro and $x^2$ in `code`\n\
+            plain words\n";
+        let lines = highlight(&Language::of_path("paper/main.typ"), text);
+        let text_of = |line: usize, style: TokenStyle| -> Vec<&str> {
+            let source = text.lines().nth(line).unwrap();
+            lines[line]
+                .iter()
+                .filter(|token| token.style == style)
+                .map(|token| &source[token.range.clone()])
+                .collect()
+        };
+        let styles_of = |line: usize| -> Vec<TokenStyle> {
+            lines[line].iter().map(|token| token.style).collect()
+        };
+
+        assert_eq!(text_of(0, TokenStyle::Keyword), ["= Introduction "]);
+        assert_eq!(text_of(0, TokenStyle::Constant), ["<intro>"]);
+
+        assert_eq!(text_of(1, TokenStyle::Keyword), ["set"]);
+        assert_eq!(text_of(1, TokenStyle::Function), ["text"]);
+        assert_eq!(text_of(1, TokenStyle::Number), ["12pt"]);
+        assert_eq!(text_of(1, TokenStyle::Comment), ["// the rule"]);
+
+        assert_eq!(text_of(2, TokenStyle::Keyword), ["let"]);
+        assert_eq!(text_of(2, TokenStyle::Function), ["double"]);
+        // The block opened on the `#let` line is still code on the next one.
+        assert_eq!(text_of(3, TokenStyle::Number), ["2"]);
+        assert_eq!(text_of(3, TokenStyle::Punctuation), ["*"]);
+        assert_eq!(text_of(4, TokenStyle::Punctuation), ["}"]);
+
+        assert_eq!(text_of(5, TokenStyle::Punctuation), ["-"]);
+        assert_eq!(text_of(5, TokenStyle::Constant), ["@intro"]);
+        assert_eq!(text_of(5, TokenStyle::StringLit), ["$x^2$", "`code`"]);
+        assert_eq!(text_of(5, TokenStyle::Plain), [" see ", " and ", " in "]);
+
         assert!(
             styles_of(6).iter().all(|style| *style == TokenStyle::Plain),
             "{:?}",

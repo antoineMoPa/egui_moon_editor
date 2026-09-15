@@ -18,8 +18,7 @@ exclude = [".github/"]
 
 [features]
 default = ["syntax"]
-## Syntax highlighting, via syntect's bundled grammars and the TypeScript and Rhai ones in
-## `grammars/`.
+## Syntax highlighting, via syntect's bundled grammars and the ones in `grammars/`.
 syntax = ["dep:syntect"]
 ## `serde` for the settings an application keeps in a file of its own - `Indent` above all,
 ## which is a fact about a repo and so is something a repo tends to have written down.

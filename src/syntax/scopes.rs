@@ -95,6 +95,9 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     // them here.
     ("markup.heading", TokenStyle::Keyword),
     ("markup.raw", TokenStyle::StringLit),
+    // Math is the other thing on a Typst page that is not prose, and it reads the way a
+    // verbatim run does: one run, set off from the words around it.
+    ("markup.math", TokenStyle::StringLit),
 ];
 
 /// The look `scope` asks for, or nothing when the table has no row that fits.

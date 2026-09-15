@@ -28,9 +28,10 @@ mod grammars {
     /// The grammars in `grammars/`, by the name of their file.
     ///
     /// syntect's bundled set has no TypeScript of any kind in it — not `.ts`, not `.tsx` —
-    /// no Rhai and no Org, and these are the whole of what is added to make up for that. See
-    /// the notice at the top of each file for where it came from and under what licence.
-    const ADDED_GRAMMARS: &[&str] = &["TypeScript", "TypeScriptReact", "Rhai", "Org"];
+    /// no Rhai, no Org and no Typst, and these are the whole of what is added to make up for
+    /// that. See the notice at the top of each file for where it came from and under what
+    /// licence.
+    const ADDED_GRAMMARS: &[&str] = &["TypeScript", "TypeScriptReact", "Rhai", "Org", "Typst"];
 
     /// Fold the added grammars into syntect's bundled ones and write the lot to `OUT_DIR`.
     pub(super) fn write_dump() {

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Typst is highlighted, from `grammars/Typst.sublime-syntax`, written for this crate: headings,
+  lists, raw runs, labels and references in markup; keywords, calls, strings and numbers with
+  their units in the code a `#` lets in; math as one run of its own. `markup.math` gains a row
+  in the scope table, read the way a verbatim run is.
+
 - `Editor::place_caret` puts the caret at a byte of the text on the next frame, and gives the
   text area the keyboard - for a caller that has just put text in with `replace_ranges` and
   wants the caret in it.

@@ -1,0 +1,252 @@
+%YAML 1.2
+---
+# Typst (https://typst.app), written for this crate rather than taken from anywhere, and under
+# the crate's own licence. A `.typ` file is markup with code let in by `#` and math let in by
+# `$`, and the three are read in three modes below: markup for headings, lists, raw runs,
+# labels and references; code for `#let`, `#set`, `#show`, calls, strings and numbers with
+# their units; math as one run of its own, with `#` still opening code inside it. Strong and
+# emphasis are left as the prose they wrap.
+# http://www.sublimetext.com/docs/3/syntax.html
+name: Typst
+file_extensions:
+  - typ
+scope: text.typst
+
+variables:
+  # Typst lets a hyphen inside a name: `text-size`, `page-break`. `x-1` is therefore a name and
+  # not a subtraction, which is what the language itself makes of it.
+  identifier: '[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*'
+  keyword: '(?:let|set|show|import|include|if|else|for|in|while|break|continue|return|as|context|not|and|or)'
+  literal: '(?:none|auto|true|false)'
+  unit: '(?:pt|mm|cm|in|em|fr|deg|rad|%)'
+
+contexts:
+  main:
+    - include: markup
+
+  # Everything a stretch of markup can hold. The contexts a `[` from code opens and a heading
+  # line pushes both read the same rules, so they are one list.
+  markup:
+    - include: comments
+    - include: headings
+    - include: lists
+    - include: escapes
+    - include: raw
+    - include: math
+    - include: labels
+    - include: embedded
+
+  comments:
+    # The newline stays out of the match on purpose: inside `#let x = 1 // note` it is the
+    # newline that ends the code, and a comment that swallowed it would carry the code over
+    # to the next line.
+    - match: '//[^\n]*'
+      scope: comment.line.double-slash.typst
+    - match: '/\*'
+      push: comment-block
+
+  # Typst's block comments nest, so a `*/` closes only the innermost `/*`.
+  comment-block:
+    - meta_scope: comment.block.typst
+    - match: '\*/'
+      pop: true
+    - match: '/\*'
+      push: comment-block
+
+  headings:
+    # `= `, `== ` and so on down: the equals signs and the whole line are the heading, with
+    # whatever markup is on it - a label at its end, most often - still read as itself.
+    - match: '^\s*(=+)\s+'
+      captures:
+        1: punctuation.definition.heading.typst
+      push:
+        - meta_scope: markup.heading.typst
+        - match: '$\n?'
+          pop: true
+        - include: markup
+
+  lists:
+    # `- item`, `+ item`, `1. item` and `/ term: description`.
+    - match: '^\s*(-|\+|\d+\.|/)\s+'
+      captures:
+        1: keyword.operator.list.typst
+
+  escapes:
+    - match: '\\(?:u\{\h+\}|.)'
+      scope: constant.character.escape.typst
+
+  raw:
+    # Three backticks fence a block, with the language tag on the opening line; one backtick
+    # opens an inline run, which may still run over more than one line.
+    - match: '```'
+      scope: punctuation.definition.raw.begin.typst
+      push:
+        - meta_scope: markup.raw.block.typst
+        - match: '```'
+          scope: punctuation.definition.raw.end.typst
+          pop: true
+    - match: '`'
+      scope: punctuation.definition.raw.begin.typst
+      push:
+        - meta_scope: markup.raw.inline.typst
+        - match: '`'
+          scope: punctuation.definition.raw.end.typst
+          pop: true
+
+  math:
+    # `$x$` inline and `$ x $` on its own: one run, in which `\` still escapes, `"` still
+    # quotes and `#` still opens code.
+    - match: '\$'
+      scope: punctuation.definition.math.begin.typst
+      push:
+        - meta_scope: markup.math.typst
+        - match: '\$'
+          scope: punctuation.definition.math.end.typst
+          pop: true
+        - include: escapes
+        - include: strings
+        - include: embedded
+
+  labels:
+    # `<intro>` names the thing before it and `@intro` points back at it. The lookbehind
+    # keeps the `@` of an e-mail address from reading as a reference.
+    - match: '<{{identifier}}(?:[.:]{{identifier}})*>'
+      scope: constant.other.label.typst
+    - match: '(?<![\w.])@{{identifier}}(?:[.:]{{identifier}})*'
+      scope: constant.other.reference.typst
+
+  # `#` lets code into markup, and how far the code runs depends on what follows the `#`.
+  embedded:
+    - match: '#(?={{identifier}}|[\{\(\[])'
+      scope: punctuation.definition.expression.typst
+      push: embedded-tail
+
+  # What one `#` opened. A keyword makes the rest of the line code; a name is the expression,
+  # with as many `.field`, `(args)` and `[content]` hung off it as follow without a space; a
+  # bracket is the block it opens. The empty match at the end is the pop: nothing here fits,
+  # so the expression is over and the markup carries on.
+  embedded-tail:
+    - match: '\b(?:let|set|show|import|include|if|for|while|context|return)\b'
+      scope: keyword.control.typst
+      set: code-line
+    - match: '\b{{literal}}\b'
+      scope: constant.language.typst
+      pop: true
+    - match: '{{identifier}}(?=[\(\[])'
+      scope: variable.function.typst
+    - match: '{{identifier}}'
+      scope: variable.other.typst
+    - match: '\.(?={{identifier}})'
+      scope: punctuation.accessor.typst
+    - match: '\('
+      scope: punctuation.section.arguments.begin.typst
+      push: arguments
+    - match: '\['
+      scope: punctuation.section.content.begin.typst
+      push: content-block
+    - match: '\{'
+      scope: punctuation.section.block.begin.typst
+      push: code-block
+    - match: ''
+      pop: true
+
+  # Code from a `#let`, `#set`, `#show` or `#if` to the end of its line. A block, a call or a
+  # content block opened on the line takes as many lines as it needs, and the code carries on
+  # after it closes.
+  code-line:
+    - match: '\n'
+      pop: true
+    - include: code
+
+  code:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: declarations
+    - include: keywords
+    - include: calls
+    - include: math
+    - include: operators
+    - include: brackets
+    - include: punctuation
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.typst
+      push:
+        - meta_scope: string.quoted.double.typst
+        - match: '"'
+          scope: punctuation.definition.string.end.typst
+          pop: true
+        - match: '\\(?:u\{\h+\}|.)'
+          scope: constant.character.escape.typst
+
+  numbers:
+    # `12pt`, `1.5em`, `50%`, `2fr`: the unit is part of the number.
+    - match: '\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?{{unit}}?'
+      scope: constant.numeric.typst
+
+  declarations:
+    # `let name(` is a function being defined; `let name =` is a variable, left plain.
+    - match: '\b(let)\s+({{identifier}})(?=\()'
+      captures:
+        1: keyword.control.typst
+        2: entity.name.function.typst
+
+  keywords:
+    - match: '\b{{keyword}}\b'
+      scope: keyword.control.typst
+    - match: '\b{{literal}}\b'
+      scope: constant.language.typst
+
+  calls:
+    - match: '{{identifier}}(?=[\(\[])'
+      scope: variable.function.typst
+
+  operators:
+    - match: '=>|==|!=|<=|>=|\+=|-=|\*=|/=|\.\.|[-+*/<>=]'
+      scope: keyword.operator.typst
+
+  brackets:
+    - match: '\('
+      scope: punctuation.section.arguments.begin.typst
+      push: arguments
+    - match: '\['
+      scope: punctuation.section.content.begin.typst
+      push: content-block
+    - match: '\{'
+      scope: punctuation.section.block.begin.typst
+      push: code-block
+
+  punctuation:
+    - match: '\.'
+      scope: punctuation.accessor.typst
+    - match: ','
+      scope: punctuation.separator.comma.typst
+    - match: ';'
+      scope: punctuation.terminator.typst
+    - match: ':'
+      scope: punctuation.separator.typst
+
+  arguments:
+    - match: '\)'
+      scope: punctuation.section.arguments.end.typst
+      pop: true
+    - include: code
+
+  code-block:
+    - match: '\}'
+      scope: punctuation.section.block.end.typst
+      pop: true
+    - include: code
+
+  # Markup again, inside `[ ]` from code. A `[` in here opens another, so the `]` that closes
+  # this one is the one that matches it.
+  content-block:
+    - match: '\]'
+      scope: punctuation.section.content.end.typst
+      pop: true
+    - match: '\['
+      scope: punctuation.section.content.begin.typst
+      push: content-block
+    - include: markup
