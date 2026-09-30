@@ -109,6 +109,12 @@ pub struct EditorStyle {
     /// How wide that bar is. It sits inside [`fringe_width`](Self::fringe_width), between
     /// the numbers and the code.
     pub new_line_bar_width: f32,
+    /// How wide the minimap down the editor's right edge is. Zero draws none.
+    pub minimap_width: f32,
+    /// What the lines of the minimap are drawn in.
+    pub minimap_ink: Color32,
+    /// What the minimap marks the stretch on screen with, over its lines.
+    pub minimap_slider_ink: Color32,
     /// Between the edge of the text area and the text in it. This is what a [`egui::TextEdit`]
     /// keeps clear by default, and it is set here because the frame around the text is the
     /// widget's own.
@@ -246,6 +252,9 @@ impl EditorStyle {
                 true => DEFAULT_NEW_LINE_INKS.1,
             }),
             new_line_bar_width: 3.0,
+            minimap_width: 90.0,
+            minimap_ink: muted.gamma_multiply(0.8),
+            minimap_slider_ink: muted.gamma_multiply(0.25),
             text_margin: Margin::symmetric(4, 2),
             mark_ink: accent.linear_multiply(0.35),
             current_mark_ink: accent,

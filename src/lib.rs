@@ -52,6 +52,7 @@ mod changes;
 mod completing;
 mod editor;
 mod indenting;
+mod minimap;
 mod notes;
 mod place;
 mod style;

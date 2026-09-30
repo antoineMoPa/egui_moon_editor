@@ -7,6 +7,7 @@ use crate::{
     completing,
     completing::{Completion, Listing},
     indenting::{self, Indent},
+    minimap::Minimap,
     notes::{self, LineNote, NoteClick, PointedNote},
     place::{
         TextPoint, Word, byte_of_char, caret_at, chars_before, text_point, word_around, word_at,
@@ -178,6 +179,8 @@ pub struct Editor {
     /// as it stands - see [`place_caret`](Self::place_caret). Held until then for the same
     /// reason the outside edits are: the text area's state is only reachable from a frame.
     pending_caret: Option<usize>,
+    /// The overview down the right edge, and what it has read of the text.
+    minimap: Minimap,
 }
 
 /// A stretch of the text replaced from outside, counted in characters of the text as it was
@@ -228,6 +231,7 @@ impl Editor {
             new_lines: NewLines::default(),
             outside_edits: Vec::new(),
             pending_caret: None,
+            minimap: Minimap::default(),
         }
     }
 
@@ -307,6 +311,7 @@ impl Editor {
             self.text.replace_range(range, &with);
         }
 
+        self.minimap.text_changed();
         self.highlighter.invalidate_from(from_line);
         // The word the pointer was over and the list that was up are both of the text before.
         self.hovered_word = None;
@@ -351,6 +356,7 @@ impl Editor {
     /// Replace the text, the way loading a file does.
     pub fn set_text(&mut self, text: String) {
         self.text = text;
+        self.minimap.text_changed();
         // A different buffer entirely, so nothing the highlighter worked out about the old
         // one is worth keeping - not the tokens, and not the parser positions between them,
         // and not the word the pointer was over, which was a word of the text that is gone.
@@ -441,6 +447,7 @@ impl Editor {
             false => None,
         };
         if let Some(line) = indented {
+            self.minimap.text_changed();
             self.highlighter.invalidate_from(line);
         }
 
@@ -484,13 +491,36 @@ impl Editor {
             highlighter,
             completing: listing,
             new_lines,
+            minimap,
             ..
         } = self;
 
-        egui::ScrollArea::vertical()
+        // The minimap takes a strip down the right; the code's scroll area gets the rest. The
+        // whole is claimed from the parent first so whatever comes after lays out below it.
+        let whole = ui.available_rect_before_wrap();
+        ui.allocate_rect(whole, egui::Sense::hover());
+        let map_width = style.minimap_width.min(whole.width() / 3.0);
+        let map = Rect::from_min_max(pos2(whole.max.x - map_width, whole.min.y), whole.max);
+        let code = Rect::from_min_max(whole.min, pos2(map.min.x, whole.max.y));
+        // A press on the map is answered before the scroll area runs, so the code follows in
+        // the same frame rather than one behind.
+        let asked_offset = match map_width > 0.0 {
+            true => minimap.scroll_asked(ui, map),
+            false => None,
+        };
+        let mut code_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("moon-editor-code-column")
+                .max_rect(code),
+        );
+        let ui = &mut code_ui;
+        let mut scroll_area = egui::ScrollArea::vertical()
             .id_salt(ui.id().with("moon-editor"))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .auto_shrink([false, false]);
+        if let Some(offset) = asked_offset {
+            scroll_area = scroll_area.vertical_scroll_offset(offset);
+        }
+        let scrolled = scroll_area.show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     // A short file still gets an editor down to the bottom of the space, so
                     // the text sits on a page rather than in a box the size of what it holds.
@@ -882,6 +912,7 @@ impl Editor {
         // it started, and a paste of several lines leaves it below - and everything above that
         // line is untouched, because the grammar reaching it never looked further down.
         if response.changed() {
+            self.minimap.text_changed();
             let caret_after = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
             // With no caret to read there is nothing to say where the edit was, so the whole
             // buffer is suspect. That is only reachable if something changed the text without
@@ -891,6 +922,19 @@ impl Editor {
                 (before, after) => before.or(after).unwrap_or(0),
             };
             self.highlighter.invalidate_from(from);
+        }
+
+        // After the text is settled for the frame, so an edit made in it is already in the map.
+        if map_width > 0.0 {
+            self.minimap.paint(
+                ui,
+                map,
+                &self.text,
+                style,
+                scrolled.state.offset.y,
+                scrolled.inner_rect.height(),
+                row_height,
+            );
         }
 
         // Put in after the text area has run rather than before it: the caret it is measured
@@ -903,6 +947,7 @@ impl Editor {
             .cloned();
         if let Some(completion) = &completion_taken {
             let from = insert_completion(ui.ctx(), text_id, &mut self.text, completion);
+            self.minimap.text_changed();
             self.highlighter.invalidate_from(from);
             let caret = caret_at(ui.ctx(), text_id, &self.text).map(|point| point.line);
             let now = ui.input(|input| input.time);
