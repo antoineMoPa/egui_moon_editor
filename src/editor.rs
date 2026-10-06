@@ -7,7 +7,7 @@ use crate::{
     completing,
     completing::{Completion, Listing},
     indenting::{self, Indent},
-    minimap::Minimap,
+    minimap::TextMinimap,
     notes::{self, LineNote, NoteClick, PointedNote},
     place::{
         TextPoint, Word, byte_of_char, caret_at, chars_before, text_point, word_around, word_at,
@@ -180,7 +180,7 @@ pub struct Editor {
     /// reason the outside edits are: the text area's state is only reachable from a frame.
     pending_caret: Option<usize>,
     /// The overview down the right edge, and what it has read of the text.
-    minimap: Minimap,
+    minimap: TextMinimap,
 }
 
 /// A stretch of the text replaced from outside, counted in characters of the text as it was
@@ -231,7 +231,7 @@ impl Editor {
             new_lines: NewLines::default(),
             outside_edits: Vec::new(),
             pending_caret: None,
-            minimap: Minimap::default(),
+            minimap: TextMinimap::default(),
         }
     }
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `Minimap` is public: the map down the editor's right edge, for an application with rows of
+  its own to map - a diff's, say - that should look and answer like the editor's. It is told
+  where the lines and the bands of ground are, a layer of one ink at a time, through
+  `MinimapFold`, and does the rest: the fold to its own height, the slider, the dimming, and
+  the press that scrolls.
+
 - Typst is highlighted, from `grammars/Typst.sublime-syntax`, written for this crate: headings,
   lists, raw runs, labels and references in markup; keywords, calls, strings and numbers with
   their units in the code a `#` lets in; math as one run of its own. `markup.math` gains a row

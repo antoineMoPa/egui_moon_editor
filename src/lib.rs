@@ -62,6 +62,7 @@ mod text;
 pub use completing::Completion;
 pub use editor::{Editor, EditorOutput, EditorRequest, Marks, Underline};
 pub use indenting::Indent;
+pub use minimap::{Minimap, MinimapFold, MinimapSpan};
 pub use notes::{LineNote, NoteClick, PointedNote};
 pub use place::{TextPoint, Word};
 pub use style::{EditorStyle, SyntaxTheme, TokenLook};
