@@ -596,7 +596,7 @@ impl Editor {
                             // of numbers beside it sit on one surface instead of the text being
                             // a panel on top.
                             let frame = egui::Frame::new().inner_margin(style.text_margin);
-                            let output = egui::TextEdit::multiline(text)
+                            let mut output = egui::TextEdit::multiline(text)
                                 .id(text_id)
                                 .font(style.font.clone())
                                 .code_editor()
@@ -847,7 +847,8 @@ impl Editor {
 
                             marks_laid_out = request.marks.ranges.len();
                             response = Some(output.response.response.clone());
-                            current_mark_at = select_current_mark(ui, &request.marks, output);
+                            current_mark_at =
+                                select_current_mark(ui, &request.marks, &mut output);
                         });
 
                     // Asked for out here, where the vertical scroll can hear it: the horizontal
@@ -1090,12 +1091,18 @@ fn lines_across(visible: egui::Rangef, top: f32, row_height: f32) -> Range<usize
     line_at(visible.min)..line_at(visible.max) + 1
 }
 
-/// Select the current mark in the laid-out text and say where it landed, when the caller
-/// asked for it this frame.
-fn select_current_mark(
+/// Select the current mark in the text a `TextEdit` has just laid out, scroll to it, and say
+/// where it landed - when [`Marks::select_current`] asks for it this frame, and there is a
+/// current mark to select.
+///
+/// [`Editor::ui`] does this for its own text. It is public for a plain [`egui::TextEdit`] whose
+/// marks are laid in with [`marked_plain_text`](crate::marked_plain_text): `output` is what
+/// that box's `show` handed back, and `ui` the one it was shown in, which is the one whose
+/// scroll area is asked to bring the mark into view.
+pub fn select_current_mark(
     ui: &mut Ui,
     marks: &Marks<'_>,
-    mut output: egui::text_edit::TextEditOutput,
+    output: &mut egui::text_edit::TextEditOutput,
 ) -> Option<Rect> {
     if !marks.select_current {
         return None;
@@ -1114,7 +1121,7 @@ fn select_current_mark(
     ui.scroll_to_rect(at, Some(Align::Center));
 
     output.state.cursor.set_char_range(Some(cursors));
-    output.state.store(ui.ctx(), output.response.id);
+    output.state.clone().store(ui.ctx(), output.response.id);
     Some(at)
 }
 
@@ -1126,9 +1133,10 @@ fn select_current_mark(
 /// because a match found by a search lands wherever it lands, usually across the middle of a
 /// string or an identifier, and a search should not repaint the code it is searching.
 ///
-/// Marks are byte ranges of `text`. A mark reaching past the end of the text is where the
-/// laying out stops: the text can have been edited since the marks were worked out, and the
-/// rest of it is drawn plain rather than cut at an offset that is no longer there.
+/// Marks are byte ranges of `text`. A mark the text can no longer be cut at - one reaching past
+/// its end, or starting or ending inside a character - is where the laying out stops: the text
+/// can have been edited since the marks were worked out, and the rest of it is drawn plain
+/// rather than cut at an offset that is no longer there.
 fn marked_text(
     text: &str,
     marks: &[Range<usize>],
@@ -1155,7 +1163,7 @@ fn marked_text(
 /// Two things are laid over the text here and they are cut against each other rather than one
 /// winning: a search can find a match inside the word the pointer is over, and neither the
 /// match nor the word it is in should disappear because of the other.
-fn marked_spans(
+pub(crate) fn marked_spans(
     text: &str,
     marks: &[Range<usize>],
     current: usize,
@@ -1166,7 +1174,7 @@ fn marked_spans(
     let mut spans = Vec::new();
     let mut cut = 0;
     for (index, range) in marks.iter().enumerate() {
-        if range.start < cut || range.end > text.len() || !text.is_char_boundary(range.start) {
+        if range.start < cut || !fits(text, range) {
             break;
         }
         let mark = MarkLook {
@@ -1261,9 +1269,9 @@ fn underlined_word(
 
 /// What a mark adds to the runs it covers, on top of the look each one already has.
 #[derive(Clone, Copy)]
-struct MarkLook {
-    background: egui::Color32,
-    underline: egui::Stroke,
+pub(crate) struct MarkLook {
+    pub(crate) background: egui::Color32,
+    pub(crate) underline: egui::Stroke,
 }
 
 impl MarkLook {
@@ -1392,5 +1400,18 @@ mod tests {
     fn a_caret_placed_past_the_end_is_a_mistake() {
         let mut editor = Editor::new("one".to_string());
         editor.place_caret(4);
+    }
+
+    /// A mark is worked out against the text as it was at the top of the frame, and the text
+    /// area lays its text out again after taking what was typed into it. `ab` marked whole and
+    /// then replaced by `a\u{e9}` leaves the mark ending inside the `\u{e9}`, where the text
+    /// cannot be cut - so that mark is where the marking stops, and the text is drawn plain.
+    #[test]
+    fn a_mark_ending_inside_a_character_is_left_out() {
+        let text = "a\u{e9}";
+        let spans = marked_spans(text, &[0..2], 0, None, &[], &EditorStyle::default());
+
+        let cuts: Vec<Range<usize>> = spans.into_iter().map(|(span, _)| span).collect();
+        assert_eq!(cuts, vec![0..text.len()]);
     }
 }

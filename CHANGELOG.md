@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `marked_plain_text` lays marks into the text of a plain `egui::TextEdit` - a box of prose
+  beside the editors, searched the way they are - and `select_current_mark` is public, to put
+  that box's caret on the mark stepped to. A mark ending inside a character of a text edited
+  since the marks were found is left out rather than cut at.
+
 - `Minimap` is public: the map down the editor's right edge, for an application with rows of
   its own to map - a diff's, say - that should look and answer like the editor's. It is told
   where the lines and the bands of ground are, a layer of one ink at a time, through
