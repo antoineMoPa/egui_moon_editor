@@ -265,13 +265,8 @@ pub(crate) fn draw(
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let on_screen = completions.iter().enumerate().skip(first).take(shown);
                     for (index, completion) in on_screen {
-                        let row = draw_row(
-                            ui,
-                            style,
-                            completion,
-                            index == listing.selected,
-                            row_height,
-                        );
+                        let row =
+                            draw_row(ui, style, completion, index == listing.selected, row_height);
                         if row.clicked() {
                             clicked = Some(index);
                         }

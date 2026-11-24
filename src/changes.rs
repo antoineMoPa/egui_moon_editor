@@ -90,7 +90,10 @@ impl NewLines {
     /// editor has to be drawn again for the fringe to carry on by itself - at once while a bar
     /// is fading in, when the wait runs out while an edit is owed, and not at all otherwise.
     pub(crate) fn settle(&mut self, text: &str, now: f64) -> Option<Duration> {
-        if let Some(owed) = self.owed.take_if(|owed| now - owed.since >= QUIET_BEFORE_COMPARING) {
+        if let Some(owed) = self
+            .owed
+            .take_if(|owed| now - owed.since >= QUIET_BEFORE_COMPARING)
+        {
             let compared = new_lines(self.base.as_deref(), text, owed.caret_line);
             self.arriving = lines_not_in(&compared, &self.shown);
             self.arrived_at = now;
@@ -180,11 +183,7 @@ fn lines_not_in(ranges: &[Range<usize>], other: &[Range<usize>]) -> Vec<Range<us
 /// blank line typed under a blank line is either of the two - and the comparison alone picks
 /// one without knowing which was typed. The caret does know, so a run that could sit in more
 /// than one place is put at the one nearest it.
-fn new_lines(
-    base: Option<&str>,
-    text: &str,
-    caret_line: Option<usize>,
-) -> Vec<Range<usize>> {
+fn new_lines(base: Option<&str>, text: &str, caret_line: Option<usize>) -> Vec<Range<usize>> {
     let Some(base) = base else {
         return Vec::new();
     };
@@ -383,7 +382,10 @@ mod tests {
         new.edited("a\nb\n", 1, Some(2), 12.0);
 
         new.settle("a\nb\n", 14.0);
-        assert!(new.lines().is_empty(), "compared two seconds after the last edit");
+        assert!(
+            new.lines().is_empty(),
+            "compared two seconds after the last edit"
+        );
         new.settle("a\nb\n", 15.0);
         assert_eq!(new.lines(), vec![1..2]);
     }

@@ -63,7 +63,10 @@ const SCOPE_STYLES: &[(&str, TokenStyle)] = &[
     // them punctuated.
     ("punctuation.definition.block", TokenStyle::Punctuation),
     ("punctuation.definition.parameters", TokenStyle::Punctuation),
-    ("punctuation.definition.typeparameters", TokenStyle::Punctuation),
+    (
+        "punctuation.definition.typeparameters",
+        TokenStyle::Punctuation,
+    ),
     ("punctuation.definition.tag", TokenStyle::Punctuation),
     ("meta.brace", TokenStyle::Punctuation),
     // Names of things that have a shape.
@@ -231,7 +234,11 @@ mod tests {
             "meta.brace.round.ts",
             "meta.brace.square.ts",
         ] {
-            assert_eq!(style_of_scope(scope), Some(TokenStyle::Punctuation), "{scope}");
+            assert_eq!(
+                style_of_scope(scope),
+                Some(TokenStyle::Punctuation),
+                "{scope}"
+            );
         }
         // Still not the quotes or the slashes, which keep the colour of what they open.
         assert_eq!(style_of_scope("punctuation.definition.comment.ts"), None);

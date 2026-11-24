@@ -122,7 +122,12 @@ impl Minimap {
     /// Start the picture over, of something `content_height` tall whose rows are `row_height`
     /// each, on a map `map_height` tall. What comes back is told the lines and the bands, a
     /// layer at a time, each drawn over the ones before it.
-    pub fn fold(&mut self, content_height: f32, row_height: f32, map_height: f32) -> MinimapFold<'_> {
+    pub fn fold(
+        &mut self,
+        content_height: f32,
+        row_height: f32,
+        map_height: f32,
+    ) -> MinimapFold<'_> {
         self.strokes.clear();
         self.folded_for = (content_height, map_height);
         self.scale = (LINE_HEIGHT / row_height).min(map_height / content_height);
@@ -238,7 +243,10 @@ impl MinimapFold<'_> {
         let mut from = 0;
         while from < self.rows.len() {
             let span = self.rows[from];
-            let same = self.rows[from..].iter().take_while(|row| **row == span).count();
+            let same = self.rows[from..]
+                .iter()
+                .take_while(|row| **row == span)
+                .count();
             if !span.is_empty() {
                 self.strokes.push(Stroke {
                     rows: from..from + same,
@@ -294,7 +302,10 @@ impl TextMinimap {
         let read_again = self.stale || self.lines.is_empty();
         if read_again {
             let max_chars = Minimap::columns(map.width());
-            self.lines = text.lines().map(|line| MinimapSpan::of(line, max_chars)).collect();
+            self.lines = text
+                .lines()
+                .map(|line| MinimapSpan::of(line, max_chars))
+                .collect();
             self.stale = false;
         }
         let text_height = self.lines.len() as f32 * row_height;
@@ -304,9 +315,10 @@ impl TextMinimap {
         {
             self.ink = style.minimap_ink;
             let lines = self.lines.iter().enumerate();
-            self.map
-                .fold(text_height, row_height, map.height())
-                .lines(self.ink, lines.map(|(line, span)| (line as f32 * row_height, *span)));
+            self.map.fold(text_height, row_height, map.height()).lines(
+                self.ink,
+                lines.map(|(line, span)| (line as f32 * row_height, *span)),
+            );
         }
         self.map.paint(
             ui,
@@ -329,9 +341,16 @@ mod tests {
         let mut map = Minimap::default();
         let text_height = lines.len() as f32 * row_height;
         let lines = lines.iter().enumerate();
-        map.fold(text_height, row_height, map_height)
-            .lines(Color32::WHITE, lines.map(|(line, span)| (line as f32 * row_height, *span)));
-        let rows = map.strokes.iter().map(|stroke| stroke.rows.end).max().unwrap_or(0);
+        map.fold(text_height, row_height, map_height).lines(
+            Color32::WHITE,
+            lines.map(|(line, span)| (line as f32 * row_height, *span)),
+        );
+        let rows = map
+            .strokes
+            .iter()
+            .map(|stroke| stroke.rows.end)
+            .max()
+            .unwrap_or(0);
         let mut spans = vec![MinimapSpan::default(); rows];
         for stroke in &map.strokes {
             spans[stroke.rows.clone()].fill(stroke.span);
@@ -357,7 +376,11 @@ mod tests {
 
     #[test]
     fn a_short_file_is_two_rows_a_line() {
-        let lines = [MinimapSpan { start: 0, end: 5 }, MinimapSpan::default(), MinimapSpan { start: 1, end: 3 }];
+        let lines = [
+            MinimapSpan { start: 0, end: 5 },
+            MinimapSpan::default(),
+            MinimapSpan { start: 1, end: 3 },
+        ];
         let rows = folded(&lines, 16.0, 100.0);
         // The ink of a line on its first row, and the row under it left as the gap.
         assert_eq!(rows.len(), 5);
@@ -383,7 +406,11 @@ mod tests {
             .collect();
         assert_eq!(
             drawn,
-            vec![(2..8, Color32::RED), (12..13, Color32::RED), (4..5, Color32::GREEN)]
+            vec![
+                (2..8, Color32::RED),
+                (12..13, Color32::RED),
+                (4..5, Color32::GREEN)
+            ]
         );
     }
 }

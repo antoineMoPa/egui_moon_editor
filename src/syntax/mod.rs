@@ -666,12 +666,32 @@ mod tests {
         };
         // `export` and `const`, then the `string` the annotation names — the annotation being
         // the whole of what a JavaScript grammar would have had nothing to say about.
-        assert!(styles(&lines[1]).contains(&TokenStyle::Keyword), "{:?}", lines[1]);
-        assert!(styles(&lines[1]).contains(&TokenStyle::Type), "{:?}", lines[1]);
-        assert!(styles(&lines[1]).contains(&TokenStyle::StringLit), "{:?}", lines[1]);
+        assert!(
+            styles(&lines[1]).contains(&TokenStyle::Keyword),
+            "{:?}",
+            lines[1]
+        );
+        assert!(
+            styles(&lines[1]).contains(&TokenStyle::Type),
+            "{:?}",
+            lines[1]
+        );
+        assert!(
+            styles(&lines[1]).contains(&TokenStyle::StringLit),
+            "{:?}",
+            lines[1]
+        );
         // `interface`, and `Shape` as the type it names.
-        assert!(styles(&lines[2]).contains(&TokenStyle::Keyword), "{:?}", lines[2]);
-        assert!(styles(&lines[2]).contains(&TokenStyle::Type), "{:?}", lines[2]);
+        assert!(
+            styles(&lines[2]).contains(&TokenStyle::Keyword),
+            "{:?}",
+            lines[2]
+        );
+        assert!(
+            styles(&lines[2]).contains(&TokenStyle::Type),
+            "{:?}",
+            lines[2]
+        );
     }
 
     /// A tag is the thing a TypeScript grammar reading a `.tsx` file would get wrong — `<div`
@@ -723,8 +743,14 @@ mod tests {
                 .collect()
         };
 
-        assert_eq!(text_of(0, TokenStyle::DocComment), ["//! what the script is for"]);
-        assert_eq!(text_of(1, TokenStyle::DocComment), ["/// what the function is for"]);
+        assert_eq!(
+            text_of(0, TokenStyle::DocComment),
+            ["//! what the script is for"]
+        );
+        assert_eq!(
+            text_of(1, TokenStyle::DocComment),
+            ["/// what the function is for"]
+        );
         assert_eq!(text_of(2, TokenStyle::Keyword), ["fn"]);
         assert_eq!(text_of(2, TokenStyle::Function), ["greet"]);
 
@@ -780,11 +806,13 @@ mod tests {
     #[test]
     fn every_extension_the_table_stands_in_for_finds_the_grammar_it_names() {
         for extension in ["jsx", "mjs", "cjs"] {
-            let styles: Vec<TokenStyle> =
-                highlight(&Language::of_path(&format!("file.{extension}")), "const x = 1;\n")[0]
-                    .iter()
-                    .map(|token| token.style)
-                    .collect();
+            let styles: Vec<TokenStyle> = highlight(
+                &Language::of_path(&format!("file.{extension}")),
+                "const x = 1;\n",
+            )[0]
+            .iter()
+            .map(|token| token.style)
+            .collect();
             assert!(
                 styles.contains(&TokenStyle::Keyword),
                 ".{extension} was read plainly: {styles:?}"

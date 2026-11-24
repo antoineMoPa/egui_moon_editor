@@ -143,7 +143,11 @@ fn stepping_down_and_pressing_enter_puts_the_second_candidate_in_place_of_the_wo
 
     assert_eq!(harness.state().text, "let values");
     assert_eq!(
-        harness.state().taken.as_ref().map(|item| item.label.clone()),
+        harness
+            .state()
+            .taken
+            .as_ref()
+            .map(|item| item.label.clone()),
         Some("values".to_string())
     );
     // The caret is left at the end of what was put in, ready to be typed on from.
@@ -278,7 +282,11 @@ fn a_list_that_shortens_under_the_highlight_still_takes_a_row_that_is_in_it() {
     harness.run_steps(4);
 
     assert_eq!(
-        harness.state().taken.as_ref().map(|item| item.label.clone()),
+        harness
+            .state()
+            .taken
+            .as_ref()
+            .map(|item| item.label.clone()),
         Some("value_one".to_string())
     );
     assert_eq!(harness.state().text, "let value_one");
@@ -325,7 +333,9 @@ fn tab_takes_a_candidate_too_and_one_asking_for_nothing_back_ends_up_at_the_end_
         Some("greet(".len())
     );
 
-    harness.get_by_role(Role::MultilineTextInput).type_text(" val");
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text(" val");
     harness.run_steps(4);
     *offer.lock().unwrap() = vec![candidate("value")];
     harness.run_steps(4);

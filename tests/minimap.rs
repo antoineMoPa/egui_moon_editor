@@ -28,7 +28,10 @@ fn pressing_the_bottom_of_the_map_scrolls_to_the_end_of_the_file() {
     // 500 lines at two pixels is 1000px, more than the 300 the map has, so it is squeezed to
     // fit and its bottom edge is the end of the file.
     let map_x = 600.0 - 20.0;
-    harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(map_x, 295.0)));
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(map_x, 295.0)));
     harness.run();
     harness.input_mut().events.push(egui::Event::PointerButton {
         pos: egui::pos2(map_x, 295.0),
@@ -51,6 +54,9 @@ fn pressing_the_bottom_of_the_map_scrolls_to_the_end_of_the_file() {
         .events
         .push(egui::Event::PointerMoved(egui::pos2(200.0, 20.0)));
     harness.run();
-    let line = harness.state().line_under_the_pointer.expect("the pointer is over the text");
+    let line = harness
+        .state()
+        .line_under_the_pointer
+        .expect("the pointer is over the text");
     assert!(line > 400, "the text still shows line {line}");
 }

@@ -521,387 +521,361 @@ impl Editor {
             scroll_area = scroll_area.vertical_scroll_offset(offset);
         }
         let scrolled = scroll_area.show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    // A short file still gets an editor down to the bottom of the space, so
-                    // the text sits on a page rather than in a box the size of what it holds.
-                    let rows_on_screen = (ui.available_height() / row_height).floor() as usize;
+            ui.horizontal_top(|ui| {
+                // A short file still gets an editor down to the bottom of the space, so
+                // the text sits on a page rather than in a box the size of what it holds.
+                let rows_on_screen = (ui.available_height() / row_height).floor() as usize;
 
-                    // The fringe is outside the horizontal scroll area, so scrolling the code
-                    // sideways slides it under numbers that stay where they are. Its height is
-                    // only an estimate for layout - the numbers are painted where the laid-out
-                    // text really put each line.
-                    let fringe_height = row_height * line_count as f32;
-                    // The column of notes, when there is one, sits left of the numbers and
-                    // widens the fringe by exactly itself.
-                    let (fringe, _) = ui.allocate_exact_size(
-                        vec2(style.fringe_width + notes_width, fringe_height),
-                        egui::Sense::hover(),
-                    );
-                    let notes_column = Rect::from_min_max(
-                        fringe.min,
-                        pos2(fringe.min.x + notes_width, fringe.max.y),
-                    );
-                    // Where each note on screen was drawn, stretched over its rows as they
-                    // come by, and which row of its stretch the first of those is, for the
-                    // pointer to be read against once the rows are painted.
-                    let mut note_rects: Vec<(usize, Rect, usize)> = Vec::new();
-                    // Where the pointer is, for the link of a note to light up under it as
-                    // the note is painted - before the note's response exists to ask.
-                    let pointer = ui.ctx().pointer_hover_pos();
-                    // The fringe's painter, kept from out here: the one inside the horizontal
-                    // scroll area clips to the code, and the numbers sit left of it.
-                    let painter = ui.painter().clone();
+                // The fringe is outside the horizontal scroll area, so scrolling the code
+                // sideways slides it under numbers that stay where they are. Its height is
+                // only an estimate for layout - the numbers are painted where the laid-out
+                // text really put each line.
+                let fringe_height = row_height * line_count as f32;
+                // The column of notes, when there is one, sits left of the numbers and
+                // widens the fringe by exactly itself.
+                let (fringe, _) = ui.allocate_exact_size(
+                    vec2(style.fringe_width + notes_width, fringe_height),
+                    egui::Sense::hover(),
+                );
+                let notes_column =
+                    Rect::from_min_max(fringe.min, pos2(fringe.min.x + notes_width, fringe.max.y));
+                // Where each note on screen was drawn, stretched over its rows as they
+                // come by, and which row of its stretch the first of those is, for the
+                // pointer to be read against once the rows are painted.
+                let mut note_rects: Vec<(usize, Rect, usize)> = Vec::new();
+                // Where the pointer is, for the link of a note to light up under it as
+                // the note is painted - before the note's response exists to ask.
+                let pointer = ui.ctx().pointer_hover_pos();
+                // The fringe's painter, kept from out here: the one inside the horizontal
+                // scroll area clips to the code, and the numbers sit left of it.
+                let painter = ui.painter().clone();
 
-                    // What the vertical scroll area has on screen, in lines, measured off the
-                    // top of the content the same way the fringe measures its numbers. The
-                    // grammar is read over that window and a screenful either side of it, so
-                    // a scroll of less than a page lands on lines already read rather than
-                    // racing the parser down the file.
-                    let visible = painter.clip_rect().expand(row_height).y_range();
-                    let window = lines_across(visible, fringe.min.y, row_height);
-                    highlighter.prepare(
-                        text,
-                        window.start.saturating_sub(rows_on_screen)
-                            ..window.end.saturating_add(rows_on_screen),
-                    );
+                // What the vertical scroll area has on screen, in lines, measured off the
+                // top of the content the same way the fringe measures its numbers. The
+                // grammar is read over that window and a screenful either side of it, so
+                // a scroll of less than a page lands on lines already read rather than
+                // racing the parser down the file.
+                let visible = painter.clip_rect().expand(row_height).y_range();
+                let window = lines_across(visible, fringe.min.y, row_height);
+                highlighter.prepare(
+                    text,
+                    window.start.saturating_sub(rows_on_screen)
+                        ..window.end.saturating_add(rows_on_screen),
+                );
 
-                    egui::ScrollArea::horizontal()
-                        .id_salt(ui.id().with("moon-editor-code"))
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            // The marks are drawn into the text itself rather than left to the
-                            // editor's selection: whatever is holding the keyboard while marks
-                            // are shown, an unfocused editor paints no selection at all, so a
-                            // search would otherwise turn up matches nobody can see.
-                            let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                                let job = marked_text(
-                                    text.as_str(),
-                                    &byte_marks,
-                                    request.marks.current,
-                                    underline.clone(),
-                                    request.underlines,
-                                    highlighter,
-                                    style,
-                                    wrap,
-                                );
-                                ui.fonts_mut(|fonts| fonts.layout_job(job))
-                            };
-                            // A frame of its own, in place of the boxed-in one a `TextEdit`
-                            // draws: no rounded corners, no border, and no accent-coloured ring
-                            // when it holds the keyboard - the frame around the editor already
-                            // shows that, and the text of a file should read as the page of an
-                            // editor rather than as a form field on it.
-                            // Nothing painted behind the text either: whatever background the
-                            // editor was placed on carries through, so the code and the fringe
-                            // of numbers beside it sit on one surface instead of the text being
-                            // a panel on top.
-                            let frame = egui::Frame::new().inner_margin(style.text_margin);
-                            let mut output = egui::TextEdit::multiline(text)
-                                .id(text_id)
-                                .font(style.font.clone())
-                                .code_editor()
-                                .frame(frame)
-                                .margin(style.text_margin)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(line_count.max(rows_on_screen))
-                                .layouter(&mut layouter)
-                                .show(ui);
-                            if request.focus {
+                egui::ScrollArea::horizontal()
+                    .id_salt(ui.id().with("moon-editor-code"))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        // The marks are drawn into the text itself rather than left to the
+                        // editor's selection: whatever is holding the keyboard while marks
+                        // are shown, an unfocused editor paints no selection at all, so a
+                        // search would otherwise turn up matches nobody can see.
+                        let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                            let job = marked_text(
+                                text.as_str(),
+                                &byte_marks,
+                                request.marks.current,
+                                underline.clone(),
+                                request.underlines,
+                                highlighter,
+                                style,
+                                wrap,
+                            );
+                            ui.fonts_mut(|fonts| fonts.layout_job(job))
+                        };
+                        // A frame of its own, in place of the boxed-in one a `TextEdit`
+                        // draws: no rounded corners, no border, and no accent-coloured ring
+                        // when it holds the keyboard - the frame around the editor already
+                        // shows that, and the text of a file should read as the page of an
+                        // editor rather than as a form field on it.
+                        // Nothing painted behind the text either: whatever background the
+                        // editor was placed on carries through, so the code and the fringe
+                        // of numbers beside it sit on one surface instead of the text being
+                        // a panel on top.
+                        let frame = egui::Frame::new().inner_margin(style.text_margin);
+                        let mut output = egui::TextEdit::multiline(text)
+                            .id(text_id)
+                            .font(style.font.clone())
+                            .code_editor()
+                            .frame(frame)
+                            .margin(style.text_margin)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(line_count.max(rows_on_screen))
+                            .layouter(&mut layouter)
+                            .show(ui);
+                        if request.focus {
+                            output.response.request_focus();
+                        }
+                        // A right-click puts the caret where it was made, the way a left
+                        // one does: a menu opened on a name is about that name, and what a
+                        // caller asks about is the place the caret is at. Not inside a
+                        // selection, which is what a menu opened over it is about.
+                        if output.response.secondary_clicked()
+                            && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
+                        {
+                            let clicked =
+                                output.galley.cursor_from_pos(pointer - output.galley_pos);
+                            let in_the_selection = output.cursor_range.is_some_and(|range| {
+                                let [min, max] = range.sorted_cursors();
+                                min.index < max.index
+                                    && (min.index..=max.index).contains(&clicked.index)
+                            });
+                            if !in_the_selection {
+                                let mut state = output.state.clone();
+                                state
+                                    .cursor
+                                    .set_char_range(Some(egui::text::CCursorRange::one(clicked)));
+                                state.store(ui.ctx(), text_id);
                                 output.response.request_focus();
                             }
-                            // A right-click puts the caret where it was made, the way a left
-                            // one does: a menu opened on a name is about that name, and what a
-                            // caller asks about is the place the caret is at. Not inside a
-                            // selection, which is what a menu opened over it is about.
-                            if output.response.secondary_clicked()
-                                && let Some(pointer) =
-                                    ui.input(|input| input.pointer.interact_pos())
-                            {
-                                let clicked =
-                                    output.galley.cursor_from_pos(pointer - output.galley_pos);
-                                let in_the_selection = output.cursor_range.is_some_and(|range| {
-                                    let [min, max] = range.sorted_cursors();
-                                    min.index < max.index
-                                        && (min.index..=max.index).contains(&clicked.index)
-                                });
-                                if !in_the_selection {
-                                    let mut state = output.state.clone();
-                                    state.cursor.set_char_range(Some(
-                                        egui::text::CCursorRange::one(clicked),
-                                    ));
-                                    state.store(ui.ctx(), text_id);
-                                    output.response.request_focus();
-                                }
-                            }
-                            // An edit moves the bars below it with their lines; the comparison
-                            // itself waits for the typing to stop, and is told where the caret
-                            // was left, which is where the typing was. The edit starts at the
-                            // earliest line anything happened on.
-                            let now = ui.input(|input| input.time);
-                            if output.response.changed() || indented.is_some() {
-                                let caret = caret_at(ui.ctx(), text_id, text.as_str())
-                                    .map(|point| point.line);
-                                let at = [caret_before, caret, indented]
-                                    .into_iter()
-                                    .flatten()
-                                    .min()
-                                    .unwrap_or(0);
-                                new_lines.edited(text.as_str(), at, caret, now);
-                            }
-                            // Nothing else may draw a frame once the typing stops, so the
-                            // fringe asks for the one its comparison is due on, and for every
-                            // frame of a fade.
-                            if let Some(after) = new_lines.settle(text.as_str(), now) {
-                                ui.ctx().request_repaint_after(after);
-                            }
-
-                            // The word under the pointer, found in the text as it was just
-                            // laid out - so what is reported is this frame's, and only the
-                            // underline lags. `contains_pointer` rather than `hovered`: the
-                            // answer is about where the pointer is, not about whether the
-                            // text area is the widget entitled to react to it.
-                            if output.response.contains_pointer()
-                                && let Some(pointer) =
-                                    ui.input(|input| input.pointer.interact_pos())
-                            {
-                                pointed_word = word_at(
-                                    text.as_str(),
-                                    &output.galley,
-                                    output.galley_pos,
-                                    pointer,
-                                );
-                                let under =
-                                    output.galley.cursor_from_pos(pointer - output.galley_pos);
-                                pointed_at = Some(text_point(
-                                    text.as_str(),
-                                    byte_of_char(text.as_str(), under.index.0),
-                                ));
-                            }
-                            if navigating {
-                                navigable_word = pointed_word.clone();
-                            }
-                            if let Some(word) = &navigable_word {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                if output.response.clicked() {
-                                    navigated_to = Some(word.clone());
-                                }
-                            }
-
-                            // Each number at the height the galley actually gave its line -
-                            // counting multiples of the font's row height drifts away from the
-                            // text within a screen, because the editor lays its rows out with
-                            // spacing of its own. A row only starts a line when the row before
-                            // it ended in a newline, which is what keeps the numbers right if
-                            // the text ever wraps.
-                            let rows = &output.galley.rows;
-                            let top = output.galley_pos.y;
-                            // The line asked about is what the editor scrolls to, so it is
-                            // looked for over the whole galley: the point of asking is usually
-                            // that it is not on screen yet.
-                            if let Some(wanted) = request.line_of_interest {
-                                line_at = rows
-                                    .iter()
-                                    .zip(row_lines(rows))
-                                    .find(|(_, line)| line.starts && line.number == wanted)
-                                    .map(|(placed, _)| {
-                                        Rect::from_min_size(
-                                            pos2(output.galley_pos.x, top + placed.pos.y),
-                                            vec2(1.0, row_height),
-                                        )
-                                    });
-                            }
-                            // Rows run down the page in order, so the ones on screen are one
-                            // stretch of them: the painting starts where that stretch does and
-                            // stops where it ends, rather than walking the file every frame.
-                            let first =
-                                rows.partition_point(|placed| top + placed.pos.y < visible.min);
-                            for (placed, line) in rows.iter().zip(row_lines(rows)).skip(first) {
-                                let y = top + placed.pos.y;
-                                if y > visible.max {
-                                    break;
-                                }
-                                // Every row of a new line, the rest of one that wraps included,
-                                // so the bar runs the height of what is new.
-                                if let Some(opacity) = new_lines.opacity(line.number - 1, now) {
-                                    painter.rect_filled(
-                                        Rect::from_min_max(
-                                            pos2(fringe.max.x - style.new_line_bar_width, y),
-                                            pos2(fringe.max.x, y + placed.rect().height()),
-                                        ),
-                                        0.0,
-                                        style.new_line_ink.gamma_multiply(opacity),
-                                    );
-                                }
-                                // The note this line falls in, if any. Every row of the line
-                                // is the note's for the pointer, and the note is written on
-                                // the first two rows of its stretch: the title at the top,
-                                // where the rule across the column says a new stretch begins,
-                                // and the detail on the row under it.
-                                if notes_width > 0.0
-                                    && let Some(index) =
-                                        notes::note_at(request.notes, line.number - 1)
-                                {
-                                    let row = Rect::from_min_max(
-                                        pos2(notes_column.min.x, y),
-                                        pos2(notes_column.max.x, y + placed.rect().height()),
-                                    );
-                                    let row_in_note =
-                                        line.number - 1 - request.notes[index].lines.start;
-                                    match note_rects.last_mut() {
-                                        Some((last, rect, _)) if *last == index => {
-                                            *rect = rect.union(row);
-                                        }
-                                        _ => note_rects.push((index, row, row_in_note)),
-                                    }
-                                    if line.starts {
-                                        let note = &request.notes[index];
-                                        let at = pos2(notes_column.min.x + notes::NOTE_PADDING, y);
-                                        match line.number - 1 - note.lines.start {
-                                            0 => {
-                                                painter.hline(
-                                                    notes_column.x_range(),
-                                                    y,
-                                                    egui::Stroke::new(1.0, style.note_rule_ink),
-                                                );
-                                                let title = notes::fitted(&note.title, note_chars);
-                                                // The link lit up while the pointer is on it.
-                                                let lit = note.link.clone().filter(|link| {
-                                                    let on_it = notes::link_rect(
-                                                        at,
-                                                        link,
-                                                        note_advance,
-                                                        placed.rect().height(),
-                                                    );
-                                                    pointer.is_some_and(|at| on_it.contains(at))
-                                                });
-                                                notes::paint_title(
-                                                    &painter,
-                                                    at,
-                                                    &title,
-                                                    note.ink.unwrap_or(style.note_ink),
-                                                    lit,
-                                                    style,
-                                                    note_advance,
-                                                );
-                                            }
-                                            1 => {
-                                                painter.text(
-                                                    at,
-                                                    egui::Align2::LEFT_TOP,
-                                                    notes::fitted(&note.detail, note_chars),
-                                                    style.note_font.clone(),
-                                                    style.note_detail_ink,
-                                                );
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                if !line.starts {
-                                    continue;
-                                }
-                                painter.text(
-                                    pos2(fringe.max.x - 6.0, y),
-                                    egui::Align2::RIGHT_TOP,
-                                    line.number.to_string(),
-                                    style.line_number_font.clone(),
-                                    style.fringe_ink,
-                                );
-                            }
-
-                            // Where the caret is on screen, for a caller hanging something off
-                            // it - the signature of the call being typed.
-                            if let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str()) {
-                                let at = egui::text::CCursor::new(chars_before(
-                                    text.as_str(),
-                                    caret.offset,
-                                ));
-                                caret_rect = Some(
-                                    output
-                                        .galley
-                                        .pos_from_cursor(at)
-                                        .translate(output.galley_pos.to_vec2()),
-                                );
-                            }
-                            // Hung off the caret in the text as it was just laid out, which is
-                            // the only place the caret's rect can be measured from.
-                            if drawing_list
-                                && let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str())
-                            {
-                                let at = egui::text::CCursor::new(chars_before(
-                                    text.as_str(),
-                                    caret.offset,
-                                ));
-                                let caret_at = output
-                                    .galley
-                                    .pos_from_cursor(at)
-                                    .translate(output.galley_pos.to_vec2());
-                                clicked_completion = completing::draw(
-                                    ui,
-                                    style,
-                                    request.completions,
-                                    listing,
-                                    caret_at,
-                                );
-                            }
-
-                            marks_laid_out = request.marks.ranges.len();
-                            response = Some(output.response.response.clone());
-                            current_mark_at =
-                                select_current_mark(ui, &request.marks, &mut output);
-                        });
-
-                    // Asked for out here, where the vertical scroll can hear it: the horizontal
-                    // area around the code takes both axes' scroll targets so they cannot leak,
-                    // and drops the one it has no bar for - so a mark below the fold, asked for
-                    // from inside it, would never be scrolled to.
-                    if let Some(rect) = line_at.or(current_mark_at) {
-                        ui.scroll_to_rect(rect, Some(Align::Center));
-                    }
-
-                    // The pointer against the notes on screen, from out here where the ui
-                    // is the one the fringe was allocated in: the one inside the sideways
-                    // scroll clips to the code, and would never see a pointer on the column.
-                    for (index, rect, first_row) in note_rects {
-                        let response = ui.interact(
-                            rect,
-                            ui.id().with(("moon-editor-note", index)),
-                            egui::Sense::click(),
-                        );
-                        if response.hovered() {
-                            pointed_note = Some(PointedNote {
-                                note: index,
-                                response: response.clone(),
-                            });
-                            // The pointing hand over the link, the way a browser shows one.
-                            if let Some(at) = pointer {
-                                let (row, column) = notes::place_within(
-                                    first_row,
-                                    rect,
-                                    at,
-                                    row_height,
-                                    note_advance,
-                                );
-                                if notes::on_the_link(&request.notes[index], row, column) {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                            }
                         }
-                        if response.clicked()
-                            && let Some(at) = response.interact_pointer_pos()
+                        // An edit moves the bars below it with their lines; the comparison
+                        // itself waits for the typing to stop, and is told where the caret
+                        // was left, which is where the typing was. The edit starts at the
+                        // earliest line anything happened on.
+                        let now = ui.input(|input| input.time);
+                        if output.response.changed() || indented.is_some() {
+                            let caret =
+                                caret_at(ui.ctx(), text_id, text.as_str()).map(|point| point.line);
+                            let at = [caret_before, caret, indented]
+                                .into_iter()
+                                .flatten()
+                                .min()
+                                .unwrap_or(0);
+                            new_lines.edited(text.as_str(), at, caret, now);
+                        }
+                        // Nothing else may draw a frame once the typing stops, so the
+                        // fringe asks for the one its comparison is due on, and for every
+                        // frame of a fade.
+                        if let Some(after) = new_lines.settle(text.as_str(), now) {
+                            ui.ctx().request_repaint_after(after);
+                        }
+
+                        // The word under the pointer, found in the text as it was just
+                        // laid out - so what is reported is this frame's, and only the
+                        // underline lags. `contains_pointer` rather than `hovered`: the
+                        // answer is about where the pointer is, not about whether the
+                        // text area is the widget entitled to react to it.
+                        if output.response.contains_pointer()
+                            && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
                         {
-                            note_clicked = Some(notes::click_within(
-                                index,
-                                first_row,
-                                rect,
-                                at,
-                                row_height,
-                                note_advance,
+                            pointed_word =
+                                word_at(text.as_str(), &output.galley, output.galley_pos, pointer);
+                            let under = output.galley.cursor_from_pos(pointer - output.galley_pos);
+                            pointed_at = Some(text_point(
+                                text.as_str(),
+                                byte_of_char(text.as_str(), under.index.0),
                             ));
                         }
+                        if navigating {
+                            navigable_word = pointed_word.clone();
+                        }
+                        if let Some(word) = &navigable_word {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            if output.response.clicked() {
+                                navigated_to = Some(word.clone());
+                            }
+                        }
+
+                        // Each number at the height the galley actually gave its line -
+                        // counting multiples of the font's row height drifts away from the
+                        // text within a screen, because the editor lays its rows out with
+                        // spacing of its own. A row only starts a line when the row before
+                        // it ended in a newline, which is what keeps the numbers right if
+                        // the text ever wraps.
+                        let rows = &output.galley.rows;
+                        let top = output.galley_pos.y;
+                        // The line asked about is what the editor scrolls to, so it is
+                        // looked for over the whole galley: the point of asking is usually
+                        // that it is not on screen yet.
+                        if let Some(wanted) = request.line_of_interest {
+                            line_at = rows
+                                .iter()
+                                .zip(row_lines(rows))
+                                .find(|(_, line)| line.starts && line.number == wanted)
+                                .map(|(placed, _)| {
+                                    Rect::from_min_size(
+                                        pos2(output.galley_pos.x, top + placed.pos.y),
+                                        vec2(1.0, row_height),
+                                    )
+                                });
+                        }
+                        // Rows run down the page in order, so the ones on screen are one
+                        // stretch of them: the painting starts where that stretch does and
+                        // stops where it ends, rather than walking the file every frame.
+                        let first = rows.partition_point(|placed| top + placed.pos.y < visible.min);
+                        for (placed, line) in rows.iter().zip(row_lines(rows)).skip(first) {
+                            let y = top + placed.pos.y;
+                            if y > visible.max {
+                                break;
+                            }
+                            // Every row of a new line, the rest of one that wraps included,
+                            // so the bar runs the height of what is new.
+                            if let Some(opacity) = new_lines.opacity(line.number - 1, now) {
+                                painter.rect_filled(
+                                    Rect::from_min_max(
+                                        pos2(fringe.max.x - style.new_line_bar_width, y),
+                                        pos2(fringe.max.x, y + placed.rect().height()),
+                                    ),
+                                    0.0,
+                                    style.new_line_ink.gamma_multiply(opacity),
+                                );
+                            }
+                            // The note this line falls in, if any. Every row of the line
+                            // is the note's for the pointer, and the note is written on
+                            // the first two rows of its stretch: the title at the top,
+                            // where the rule across the column says a new stretch begins,
+                            // and the detail on the row under it.
+                            if notes_width > 0.0
+                                && let Some(index) = notes::note_at(request.notes, line.number - 1)
+                            {
+                                let row = Rect::from_min_max(
+                                    pos2(notes_column.min.x, y),
+                                    pos2(notes_column.max.x, y + placed.rect().height()),
+                                );
+                                let row_in_note =
+                                    line.number - 1 - request.notes[index].lines.start;
+                                match note_rects.last_mut() {
+                                    Some((last, rect, _)) if *last == index => {
+                                        *rect = rect.union(row);
+                                    }
+                                    _ => note_rects.push((index, row, row_in_note)),
+                                }
+                                if line.starts {
+                                    let note = &request.notes[index];
+                                    let at = pos2(notes_column.min.x + notes::NOTE_PADDING, y);
+                                    match line.number - 1 - note.lines.start {
+                                        0 => {
+                                            painter.hline(
+                                                notes_column.x_range(),
+                                                y,
+                                                egui::Stroke::new(1.0, style.note_rule_ink),
+                                            );
+                                            let title = notes::fitted(&note.title, note_chars);
+                                            // The link lit up while the pointer is on it.
+                                            let lit = note.link.clone().filter(|link| {
+                                                let on_it = notes::link_rect(
+                                                    at,
+                                                    link,
+                                                    note_advance,
+                                                    placed.rect().height(),
+                                                );
+                                                pointer.is_some_and(|at| on_it.contains(at))
+                                            });
+                                            notes::paint_title(
+                                                &painter,
+                                                at,
+                                                &title,
+                                                note.ink.unwrap_or(style.note_ink),
+                                                lit,
+                                                style,
+                                                note_advance,
+                                            );
+                                        }
+                                        1 => {
+                                            painter.text(
+                                                at,
+                                                egui::Align2::LEFT_TOP,
+                                                notes::fitted(&note.detail, note_chars),
+                                                style.note_font.clone(),
+                                                style.note_detail_ink,
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            if !line.starts {
+                                continue;
+                            }
+                            painter.text(
+                                pos2(fringe.max.x - 6.0, y),
+                                egui::Align2::RIGHT_TOP,
+                                line.number.to_string(),
+                                style.line_number_font.clone(),
+                                style.fringe_ink,
+                            );
+                        }
+
+                        // Where the caret is on screen, for a caller hanging something off
+                        // it - the signature of the call being typed.
+                        if let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str()) {
+                            let at =
+                                egui::text::CCursor::new(chars_before(text.as_str(), caret.offset));
+                            caret_rect = Some(
+                                output
+                                    .galley
+                                    .pos_from_cursor(at)
+                                    .translate(output.galley_pos.to_vec2()),
+                            );
+                        }
+                        // Hung off the caret in the text as it was just laid out, which is
+                        // the only place the caret's rect can be measured from.
+                        if drawing_list
+                            && let Some(caret) = caret_at(ui.ctx(), text_id, text.as_str())
+                        {
+                            let at =
+                                egui::text::CCursor::new(chars_before(text.as_str(), caret.offset));
+                            let caret_at = output
+                                .galley
+                                .pos_from_cursor(at)
+                                .translate(output.galley_pos.to_vec2());
+                            clicked_completion =
+                                completing::draw(ui, style, request.completions, listing, caret_at);
+                        }
+
+                        marks_laid_out = request.marks.ranges.len();
+                        response = Some(output.response.response.clone());
+                        current_mark_at = select_current_mark(ui, &request.marks, &mut output);
+                    });
+
+                // Asked for out here, where the vertical scroll can hear it: the horizontal
+                // area around the code takes both axes' scroll targets so they cannot leak,
+                // and drops the one it has no bar for - so a mark below the fold, asked for
+                // from inside it, would never be scrolled to.
+                if let Some(rect) = line_at.or(current_mark_at) {
+                    ui.scroll_to_rect(rect, Some(Align::Center));
+                }
+
+                // The pointer against the notes on screen, from out here where the ui
+                // is the one the fringe was allocated in: the one inside the sideways
+                // scroll clips to the code, and would never see a pointer on the column.
+                for (index, rect, first_row) in note_rects {
+                    let response = ui.interact(
+                        rect,
+                        ui.id().with(("moon-editor-note", index)),
+                        egui::Sense::click(),
+                    );
+                    if response.hovered() {
+                        pointed_note = Some(PointedNote {
+                            note: index,
+                            response: response.clone(),
+                        });
+                        // The pointing hand over the link, the way a browser shows one.
+                        if let Some(at) = pointer {
+                            let (row, column) =
+                                notes::place_within(first_row, rect, at, row_height, note_advance);
+                            if notes::on_the_link(&request.notes[index], row, column) {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
                     }
-                });
+                    if response.clicked()
+                        && let Some(at) = response.interact_pointer_pos()
+                    {
+                        note_clicked = Some(notes::click_within(
+                            index,
+                            first_row,
+                            rect,
+                            at,
+                            row_height,
+                            note_advance,
+                        ));
+                    }
+                }
             });
+        });
 
         let response = response.expect("the text area is always drawn");
         // Kept for the next frame to underline: this frame's layout is already behind us.
